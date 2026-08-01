@@ -295,7 +295,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             autoTextBtn.tag = AUTO_TEXT_BUTTON_TAG;
             globalAutoTextBtn = autoTextBtn;
             
-            autoTextBtn.setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+            [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
             autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
             autoTextBtn.layer.cornerRadius = 14.0;
             autoTextBtn.layer.shadowColor = [UIColor blackColor].CGColor;
