@@ -4,6 +4,10 @@
 
 #define AUTO_TEXT_BUTTON_TAG 998877
 
+static NSMutableArray<NSString *> *pendingTextLines = nil;
+static NSInteger currentLineIndex = 0;
+static UIButton *globalAutoTextBtn = nil;
+
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -45,21 +49,23 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
-static void applyTextToAlightMotion(UIViewController *parentVC, NSString *rawText) {
-    if (rawText.length == 0) return;
-    
-    NSArray<NSString *> *lines = [rawText componentsSeparatedByString:@"\n"];
-    NSMutableArray<NSString *> *validLines = [NSMutableArray array];
-    for (NSString *l in lines) {
-        NSString *trimmed = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (trimmed.length > 0) {
-            [validLines addObject:trimmed];
-        }
+static void updateButtonState() {
+    if (!globalAutoTextBtn) return;
+    if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
+        NSString *title = [NSString stringWithFormat:@"⚡ NEXT (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
+        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95]; // Yellow for NEXT mode
+    } else {
+        [globalAutoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
+        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95]; // Neon Green for Normal mode
     }
-    if (validLines.count == 0) return;
+}
+
+static void applyCurrentLineToInput(UIViewController *parentVC) {
+    if (!pendingTextLines || currentLineIndex >= pendingTextLines.count) return;
     
-    NSString *joinedText = [validLines componentsJoinedByString:@"\n"];
-    [UIPasteboard generalPasteboard].string = joinedText;
+    NSString *line = pendingTextLines[currentLineIndex];
+    [UIPasteboard generalPasteboard].string = line;
     
     UIView *inputView = findTargetInputView(parentVC.view);
     if (!inputView && parentVC.parentViewController) {
@@ -68,14 +74,41 @@ static void applyTextToAlightMotion(UIViewController *parentVC, NSString *rawTex
     
     if ([inputView isKindOfClass:[UITextView class]]) {
         UITextView *tv = (UITextView *)inputView;
-        tv.text = joinedText;
+        tv.text = line;
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
         }
     } else if ([inputView isKindOfClass:[UITextField class]]) {
         UITextField *tf = (UITextField *)inputView;
-        tf.text = [validLines firstObject];
+        tf.text = line;
         [tf sendActionsForControlEvents:UIControlEventEditingChanged];
+    }
+    
+    currentLineIndex++;
+    if (currentLineIndex >= pendingTextLines.count) {
+        pendingTextLines = nil;
+        currentLineIndex = 0;
+    }
+    updateButtonState();
+}
+
+static void startSequentialTextProcess(UIViewController *parentVC, NSString *rawText) {
+    if (rawText.length == 0) return;
+    
+    NSArray<NSString *> *lines = [rawText componentsSeparatedByString:@"\n"];
+    pendingTextLines = [NSMutableArray array];
+    for (NSString *l in lines) {
+        NSString *trimmed = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (trimmed.length > 0) {
+            [pendingTextLines addObject:trimmed];
+        }
+    }
+    currentLineIndex = 0;
+    
+    if (pendingTextLines.count > 0) {
+        applyCurrentLineToInput(parentVC);
+    } else {
+        updateButtonState();
     }
 }
 
@@ -104,7 +137,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để tự động nạp vào Alight Motion:";
+    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để nạp từng dòng theo nhịp:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -125,7 +158,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:textView];
     
     UIButton *btnProcess = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnProcess setTitle:@"TÁCH & NẠP TEXT" forState:UIControlStateNormal];
+    [btnProcess setTitle:@"TÁCH & NẠP DÒNG 1" forState:UIControlStateNormal];
     [btnProcess setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     btnProcess.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
     btnProcess.titleLabel.font = [UIFont boldSystemFontOfSize:14.0];
@@ -178,7 +211,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     
     [btnProcess addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         NSString *raw = textView.text;
-        applyTextToAlightMotion(parentVC, raw);
+        startSequentialTextProcess(parentVC, raw);
         [modalVC dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     
@@ -206,7 +239,13 @@ static BOOL isDragging = NO;
 
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
-    presentAutoTextModal(top);
+    if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
+        // 1-Tap Mode: Inject NEXT line into current keyframe/position!
+        applyCurrentLineToInput(top);
+    } else {
+        // Normal Mode: Open Modal Popup to paste multi-line text!
+        presentAutoTextModal(top);
+    }
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -249,14 +288,14 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE "⚡ AUTO TEXT" button
+    // 2. Add DRAGGABLE 1-TAP SEQUENTIAL "⚡ AUTO TEXT" button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
             autoTextBtn.tag = AUTO_TEXT_BUTTON_TAG;
-            [autoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
-            [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-            autoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95];
+            globalAutoTextBtn = autoTextBtn;
+            
+            autoTextBtn.setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
             autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
             autoTextBtn.layer.cornerRadius = 14.0;
             autoTextBtn.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -267,6 +306,8 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             
             CGFloat screenWidth = self.view.bounds.size.width;
             autoTextBtn.frame = CGRectMake(screenWidth - 115.0, 85.0, 100.0, 32.0);
+            
+            updateButtonState();
             
             [autoTextBtn addTarget:[AutoTextButtonHandler sharedInstance] action:@selector(buttonTapped:) forControlEvents:UIControlEventTouchUpInside];
             
