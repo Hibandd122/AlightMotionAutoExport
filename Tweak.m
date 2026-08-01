@@ -4,7 +4,7 @@
 #import <objc/runtime.h>
 
 static AVAudioPlayer *audioPlayer = nil;
-static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
+static UIBackgroundTaskIdentifier bgTask = 0;
 static NSTimer *progressTimer = nil;
 static __weak UIViewController *currentExportVC = nil;
 
