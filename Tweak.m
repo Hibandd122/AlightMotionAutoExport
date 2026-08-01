@@ -17,6 +17,35 @@ static void sendExportNotification() {
     [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:nil];
 }
 
+// Hook UIViewController viewDidAppear to auto-tap the Save button on ExportPreviewVC
+static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
+static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    orig_viewDidAppear(self, _cmd, animated);
+    
+    NSString *className = NSStringFromClass([self class]);
+    if ([className containsString:@"ExportPreviewVC"] || [className containsString:@"ExportVC"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            // 1. Try invoking didTapSave methods
+            if ([self respondsToSelector:@selector(didTapSave:)]) {
+                [self performSelector:@selector(didTapSave:) withObject:nil];
+            } else if ([self respondsToSelector:@selector(didTapSave)]) {
+                [self performSelector:@selector(didTapSave)];
+            }
+            
+            // 2. Try triggering actions on saveButton property if available
+            if ([self respondsToSelector:@selector(saveButton)]) {
+                IMP imp = [self methodForSelector:@selector(saveButton)];
+                UIButton *(*func)(id, SEL) = (void *)imp;
+                UIButton *btn = func(self, @selector(saveButton));
+                if ([btn isKindOfClass:[UIButton class]]) {
+                    [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+                }
+            }
+        });
+    }
+}
+
+// Backup filesystem watcher
 static void checkNewVideos() {
     NSArray *dirs = @[ 
         NSTemporaryDirectory(), 
@@ -26,6 +55,7 @@ static void checkNewVideos() {
     ];
     
     for (NSString *dir in dirs) {
+        if (!dir) continue;
         NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:dir];
         for (NSString *file in enumerator) {
             if ([file.lowercaseString hasSuffix:@".mp4"] || [file.lowercaseString hasSuffix:@".mov"]) {
@@ -36,8 +66,7 @@ static void checkNewVideos() {
                     NSDate *modDate = [attrs fileModificationDate];
                     unsigned long long size = [attrs fileSize];
                     
-                    // If file is older than 2 seconds (hasn't been written to) and is a decent size (>1KB)
-                    if (size > 1024 && [[NSDate date] timeIntervalSinceDate:modDate] > 2.0) {
+                    if (size > 1024 && [[NSDate date] timeIntervalSinceDate:modDate] > 1.5) {
                         [seenFiles addObject:fullPath];
                         
                         if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(fullPath)) {
@@ -57,9 +86,14 @@ static void checkNewVideos() {
 }
 
 __attribute__((constructor)) static void initHooks() {
-    seenFiles = [[NSMutableSet alloc] init];
+    // 1. Hook viewDidAppear on UIViewController
+    Class vcClass = objc_getClass("UIViewController");
+    Method m = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
+    orig_viewDidAppear = (void *)method_getImplementation(m);
+    method_setImplementation(m, (IMP)hook_viewDidAppear);
     
-    // Initial scan to ignore existing files
+    // 2. Setup filesystem watcher
+    seenFiles = [[NSMutableSet alloc] init];
     NSArray *dirs = @[ 
         NSTemporaryDirectory(), 
         [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject],
@@ -67,6 +101,7 @@ __attribute__((constructor)) static void initHooks() {
         [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) firstObject]
     ];
     for (NSString *dir in dirs) {
+        if (!dir) continue;
         NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:dir];
         for (NSString *file in enumerator) {
             if ([file.lowercaseString hasSuffix:@".mp4"] || [file.lowercaseString hasSuffix:@".mov"]) {
@@ -75,7 +110,6 @@ __attribute__((constructor)) static void initHooks() {
         }
     }
     
-    // Start background timer
     dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0);
     timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
     dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 2.0 * NSEC_PER_SEC), 2.0 * NSEC_PER_SEC, 0.5 * NSEC_PER_SEC);
