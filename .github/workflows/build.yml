@@ -26,6 +26,9 @@ jobs:
           git checkout
           mv iPhoneOS14.5.sdk ../theos/sdks/
           
+      - name: Install Dependencies
+        run: brew install ldid dpkg
+          
       - name: Build Tweak
         run: |
           export THEOS=$GITHUB_WORKSPACE/theos
