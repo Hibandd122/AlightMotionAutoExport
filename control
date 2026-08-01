@@ -1,0 +1,9 @@
+Package: com.alightmotion.autoexport
+Name: AlightMotionAutoExport
+Depends: mobilesubstrate
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Auto-save export and notify
+Maintainer: Cracked-2m96
+Author: Cracked-2m96
+Section: Tweaks
