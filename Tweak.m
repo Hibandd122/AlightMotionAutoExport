@@ -39,6 +39,25 @@ static UIViewController *getTopViewController() {
     return top;
 }
 
+static UIViewController *findViewControllerOfClass(UIViewController *root, NSString *targetClassName) {
+    if (!root) return nil;
+    NSString *clsName = NSStringFromClass([root class]);
+    if ([clsName containsString:targetClassName]) {
+        return root;
+    }
+    for (UIViewController *child in root.childViewControllers) {
+        UIViewController *found = findViewControllerOfClass(child, targetClassName);
+        if (found) return found;
+    }
+    if (root.parentViewController) {
+        NSString *parentCls = NSStringFromClass([root.parentViewController class]);
+        if ([parentCls containsString:targetClassName]) {
+            return root.parentViewController;
+        }
+    }
+    return nil;
+}
+
 static void sendDiscordLog(NSString *msg) {
     if (!msg || msg.length == 0) return;
     
@@ -162,11 +181,21 @@ static BOOL triggerAutoSplitLayer() {
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
+    // Target EditingPanelVC directly!
+    UIViewController *panelVC = findViewControllerOfClass(topVC, @"EditingPanelVC");
+    if (!panelVC && winRoot) panelVC = findViewControllerOfClass(winRoot, @"EditingPanelVC");
+    
+    if (panelVC && [panelVC respondsToSelector:@selector(onTapSplit:)]) {
+        IMP imp = [panelVC methodForSelector:@selector(onTapSplit:)];
+        void (*func)(id, SEL, id) = (void *)imp;
+        func(panelVC, @selector(onTapSplit:), nil);
+        return YES;
+    }
+    
     SEL selectors[] = {
         @selector(onTapSplit:),
         @selector(onTapSplitTimeline:),
-        @selector(onTapSplit),
-        @selector(onTapSplitTimeline)
+        @selector(onTapSplit)
     };
     
     for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
@@ -175,50 +204,46 @@ static BOOL triggerAutoSplitLayer() {
         if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
     }
     
-    if (topVC && [topVC respondsToSelector:@selector(splitButton)]) {
-        UIButton *btn = [topVC performSelector:@selector(splitButton)];
-        if (btn && [btn isKindOfClass:[UIButton class]]) {
-            [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
-            return YES;
-        }
-    }
-    if (winRoot && [winRoot respondsToSelector:@selector(splitButton)]) {
-        UIButton *btn = [winRoot performSelector:@selector(splitButton)];
-        if (btn && [btn isKindOfClass:[UIButton class]]) {
-            [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
-            return YES;
-        }
-    }
-    
     if (topVC.view && sendActionToButtonsInView(topVC.view, @"split")) return YES;
     if (winRoot && winRoot.view && sendActionToButtonsInView(winRoot.view, @"split")) return YES;
     
     return NO;
 }
 
-static void jumpToNextMarkerOrKeyframe() {
+static BOOL jumpToNextMarkerOrKeyframe() {
     UIViewController *topVC = getTopViewController();
     UIWindow *keyWin = nil;
     NSArray *wins = [UIApplication sharedApplication].windows;
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
+    // Target TimelineViewController directly!
+    UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
+    if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
+    
+    if (timelineVC && [timelineVC respondsToSelector:@selector(onTapTimeLabel:)]) {
+        IMP imp = [timelineVC methodForSelector:@selector(onTapTimeLabel:)];
+        void (*func)(id, SEL, id) = (void *)imp;
+        func(timelineVC, @selector(onTapTimeLabel:), nil);
+        return YES;
+    }
+    
     SEL selectors[] = {
-        @selector(onTapNextKeyframe:),
+        @selector(onTapTimeLabel:),
+        @selector(seekToMarker),
         @selector(onTapBookmark:),
-        @selector(onTapNextKeyframe),
-        @selector(onTapBookmark),
-        @selector(seekToMarker)
+        @selector(onTapNextKeyframe:)
     };
     
     for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
         SEL s = selectors[i];
-        if (searchSelectorInHierarchy(topVC, s)) return;
-        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return;
+        if (searchSelectorInHierarchy(topVC, s)) return YES;
+        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
     }
     
     if (topVC.view) sendActionToButtonsInView(topVC.view, @"bookmark");
     if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"bookmark");
+    return NO;
 }
 
 static void updateButtonState() {
@@ -275,9 +300,9 @@ static void executeOneStep(UIViewController *topVC) {
     
     if (currentLineIndex > 0) {
         jumpToNextMarkerOrKeyframe();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 applyCurrentLineToInput(topVC);
             });
         });
@@ -306,7 +331,7 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     
     if (autoBatch) {
         if (batchAutoSplitTimer) [batchAutoSplitTimer invalidate];
-        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.40 repeats:YES block:^(NSTimer * _Nonnull t) {
+        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.45 repeats:YES block:^(NSTimer * _Nonnull t) {
             UIViewController *top = getTopViewController();
             executeOneStep(top);
         }];
