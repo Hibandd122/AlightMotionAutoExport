@@ -38,21 +38,21 @@ static UIViewController *getTopViewController() {
     return top;
 }
 
+static BOOL isViewCurrentlyVisible(UIView *view) {
+    return view && view.window && !view.hidden && view.alpha > 0.01;
+}
+
 static UIViewController *findViewControllerOfClass(UIViewController *root, NSString *targetClassName) {
     if (!root) return nil;
+
     NSString *clsName = NSStringFromClass([root class]);
-    if ([clsName containsString:targetClassName]) {
+    if ([clsName containsString:targetClassName] && root.isViewLoaded && isViewCurrentlyVisible(root.view)) {
         return root;
     }
-    for (UIViewController *child in root.childViewControllers) {
+
+    for (UIViewController *child in [root.childViewControllers reverseObjectEnumerator]) {
         UIViewController *found = findViewControllerOfClass(child, targetClassName);
         if (found) return found;
-    }
-    if (root.parentViewController) {
-        NSString *parentCls = NSStringFromClass([root.parentViewController class]);
-        if ([parentCls containsString:targetClassName]) {
-            return root.parentViewController;
-        }
     }
     return nil;
 }
@@ -93,7 +93,7 @@ static void showHUDLog(NSString *msg) {
 static UIView *findTargetInputView(UIView *view) {
     if (!view) return nil;
     if (([view isKindOfClass:[UITextView class]] || [view isKindOfClass:[UITextField class]]) &&
-        view.tag != 8899 && !view.hidden && view.alpha > 0.01 && view.userInteractionEnabled) {
+        view.tag != 8899 && isViewCurrentlyVisible(view) && view.userInteractionEnabled) {
         BOOL usable = [view isKindOfClass:[UITextView class]]
             ? [(UITextView *)view isEditable]
             : [(UITextField *)view isEnabled];
@@ -110,7 +110,7 @@ static UIView *findTextInputViewInController(UIViewController *root) {
     if (!root) return nil;
 
     NSString *className = NSStringFromClass([root class]);
-    if ([className containsString:@"TextInputVC"]) {
+    if ([className containsString:@"TextInputVC"] && root.isViewLoaded && isViewCurrentlyVisible(root.view)) {
         @try {
             id input = [root valueForKey:@"inputTextView"];
             if ([input isKindOfClass:[UITextView class]]) return (UIView *)input;
@@ -147,7 +147,7 @@ static BOOL callSelectorOnTarget(id target, SEL sel) {
 
 static BOOL sendExactActionToButton(UIView *view, NSString *actionName) {
     if (!view) return NO;
-    if ([view isKindOfClass:[UIButton class]]) {
+    if ([view isKindOfClass:[UIButton class]] && isViewCurrentlyVisible(view)) {
         UIButton *button = (UIButton *)view;
         for (id target in button.allTargets) {
             for (NSString *action in [button actionsForTarget:target forControlEvent:UIControlEventTouchUpInside]) {
@@ -162,6 +162,46 @@ static BOOL sendExactActionToButton(UIView *view, NSString *actionName) {
         if (sendExactActionToButton(child, actionName)) return YES;
     }
     return NO;
+}
+
+static UICollectionView *findSelectedTimelineCollectionView(UIView *view) {
+    if (!view) return nil;
+    if ([view isKindOfClass:[UICollectionView class]]) {
+        UICollectionView *collectionView = (UICollectionView *)view;
+        if (collectionView.indexPathsForSelectedItems.count > 0) return collectionView;
+    }
+    for (UIView *child in view.subviews) {
+        UICollectionView *found = findSelectedTimelineCollectionView(child);
+        if (found) return found;
+    }
+    return nil;
+}
+
+static BOOL selectNextTimelineLayer() {
+    UIViewController *topVC = getTopViewController();
+    UIWindow *keyWin = nil;
+    NSArray *wins = [UIApplication sharedApplication].windows;
+    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
+    UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
+
+    UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
+    if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
+    if (!timelineVC) return NO;
+
+    UICollectionView *collectionView = findSelectedTimelineCollectionView(timelineVC.view);
+    NSIndexPath *selected = collectionView.indexPathsForSelectedItems.firstObject;
+    if (!selected) return NO;
+
+    NSInteger nextItem = selected.item + 1;
+    if (nextItem >= [collectionView numberOfItemsInSection:selected.section]) return NO;
+
+    NSIndexPath *next = [NSIndexPath indexPathForItem:nextItem inSection:selected.section];
+    [collectionView deselectItemAtIndexPath:selected animated:NO];
+    [collectionView selectItemAtIndexPath:next animated:NO scrollPosition:UICollectionViewScrollPositionNone];
+    if ([collectionView.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
+        [collectionView.delegate collectionView:collectionView didSelectItemAtIndexPath:next];
+    }
+    return YES;
 }
 
 static BOOL triggerAutoSplitLayer() {
@@ -304,6 +344,16 @@ static void processLineAtIndex(NSInteger index) {
                 }
                 
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    BOOL didSelectNextLayer = selectNextTimelineLayer();
+                    if (!didSelectNextLayer) {
+                        pendingTextLines = nil;
+                        currentLineIndex = 0;
+                        isProcessingAutoBatch = NO;
+                        updateButtonState();
+                        showHUDLog(@"Khong tim thay layer moi sau khi split:");
+                        return;
+                    }
+
                     UIViewController *top = getTopViewController();
                     applyTextToInputDirectly(top, pendingTextLines[index]);
                     showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
