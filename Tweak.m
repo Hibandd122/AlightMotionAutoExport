@@ -50,56 +50,74 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
-static void jumpToNextKeyframe(UIViewController *parentVC) {
-    if (!parentVC) return;
-    
-    NSMutableArray *targets = [NSMutableArray arrayWithObject:parentVC];
-    if (parentVC.childViewControllers.count > 0) {
-        [targets addObjectsFromArray:parentVC.childViewControllers];
+static BOOL sendSelectorToHierarchy(UIViewController *vc, SEL sel) {
+    if (!vc) return NO;
+    if ([vc respondsToSelector:sel]) {
+        IMP imp = [vc methodForSelector:sel];
+        void (*func)(id, SEL) = (void *)imp;
+        func(vc, sel);
+        return YES;
     }
-    if (parentVC.parentViewController) {
-        [targets addObject:parentVC.parentViewController];
+    for (UIViewController *child in vc.childViewControllers) {
+        if (sendSelectorToHierarchy(child, sel)) return YES;
     }
-    
-    for (id target in targets) {
-        if ([target respondsToSelector:@selector(onTapNextKeyframe)]) {
-            IMP imp = [target methodForSelector:@selector(onTapNextKeyframe)];
-            void (*func)(id, SEL) = (void *)imp;
-            func(target, @selector(onTapNextKeyframe));
-            return;
-        } else if ([target respondsToSelector:@selector(goNextKeyframe)]) {
-            IMP imp = [target methodForSelector:@selector(goNextKeyframe)];
-            void (*func)(id, SEL) = (void *)imp;
-            func(target, @selector(goNextKeyframe));
-            return;
+    if (vc.parentViewController && [vc.parentViewController respondsToSelector:sel]) {
+        IMP imp = [vc.parentViewController methodForSelector:sel];
+        void (*func)(id, SEL) = (void *)imp;
+        func(vc.parentViewController, sel);
+        return YES;
+    }
+    return NO;
+}
+
+static BOOL sendActionToButtonsInView(UIView *view, NSString *selectorKeyword) {
+    if (!view) return NO;
+    if ([view isKindOfClass:[UIButton class]]) {
+        UIButton *btn = (UIButton *)view;
+        for (id target in [btn allTargets]) {
+            NSArray *actions = [btn actionsForTarget:target forControlEvent:UIControlEventTouchUpInside];
+            for (NSString *act in actions) {
+                if ([act.lowercaseString containsString:selectorKeyword.lowercaseString]) {
+                    [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+                    return YES;
+                }
+            }
         }
+    }
+    for (UIView *sub in view.subviews) {
+        if (sendActionToButtonsInView(sub, selectorKeyword)) return YES;
+    }
+    return NO;
+}
+
+static void triggerGlobalAction(SEL primarySel, SEL fallbackSel, NSString *keyword) {
+    UIViewController *topVC = getTopViewController();
+    UIWindow *keyWin = [UIApplication sharedApplication].keyWindow;
+    UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
+    
+    BOOL done = sendSelectorToHierarchy(topVC, primarySel);
+    if (!done && fallbackSel) {
+        done = sendSelectorToHierarchy(topVC, fallbackSel);
+    }
+    if (!done && winRoot && winRoot != topVC) {
+        done = sendSelectorToHierarchy(winRoot, primarySel);
+        if (!done && fallbackSel) {
+            done = sendSelectorToHierarchy(winRoot, fallbackSel);
+        }
+    }
+    
+    if (!done && keyword) {
+        if (topVC.view) sendActionToButtonsInView(topVC.view, keyword);
+        if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, keyword);
     }
 }
 
-static void triggerAutoSplitLayer(UIViewController *parentVC) {
-    if (!parentVC) return;
-    
-    NSMutableArray *targets = [NSMutableArray arrayWithObject:parentVC];
-    if (parentVC.childViewControllers.count > 0) {
-        [targets addObjectsFromArray:parentVC.childViewControllers];
-    }
-    if (parentVC.parentViewController) {
-        [targets addObject:parentVC.parentViewController];
-    }
-    
-    for (id target in targets) {
-        if ([target respondsToSelector:@selector(onTapSplit)]) {
-            IMP imp = [target methodForSelector:@selector(onTapSplit)];
-            void (*func)(id, SEL) = (void *)imp;
-            func(target, @selector(onTapSplit));
-            return;
-        } else if ([target respondsToSelector:@selector(onTapSplitTimeline)]) {
-            IMP imp = [target methodForSelector:@selector(onTapSplitTimeline)];
-            void (*func)(id, SEL) = (void *)imp;
-            func(target, @selector(onTapSplitTimeline));
-            return;
-        }
-    }
+static void jumpToNextKeyframe() {
+    triggerGlobalAction(@selector(onTapNextKeyframe), @selector(onTapBookmark), @"keyframe");
+}
+
+static void triggerAutoSplitLayer() {
+    triggerGlobalAction(@selector(onTapSplit), @selector(onTapSplitTimeline), @"split");
 }
 
 static void updateButtonState() {
@@ -155,10 +173,16 @@ static void executeOneStep(UIViewController *topVC) {
     }
     
     if (currentLineIndex > 0) {
-        jumpToNextKeyframe(topVC);
-        triggerAutoSplitLayer(topVC);
+        jumpToNextKeyframe();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            triggerAutoSplitLayer();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                applyCurrentLineToInput(topVC);
+            });
+        });
+    } else {
+        applyCurrentLineToInput(topVC);
     }
-    applyCurrentLineToInput(topVC);
 }
 
 static void startSequentialTextProcess(UIViewController *parentVC, NSString *rawText, BOOL autoBatch) {
@@ -181,7 +205,7 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     
     if (autoBatch) {
         if (batchAutoSplitTimer) [batchAutoSplitTimer invalidate];
-        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer * _Nonnull t) {
+        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 repeats:YES block:^(NSTimer * _Nonnull t) {
             UIViewController *top = getTopViewController();
             executeOneStep(top);
         }];
