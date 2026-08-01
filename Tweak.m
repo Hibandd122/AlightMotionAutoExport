@@ -306,7 +306,7 @@ static BOOL jumpToNextMarkerOrKeyframe() {
 static void updateButtonState() {
     if (!globalAutoTextBtn) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSString *title = [NSString stringWithFormat:@"⚡ CẮT & NẠP (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        NSString *title = [NSString stringWithFormat:@"⚡ NẠP TEXT (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
         [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
         globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95];
     } else {
