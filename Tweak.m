@@ -2,6 +2,8 @@
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
+#define AUTO_TEXT_BUTTON_TAG 998877
+
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -115,76 +117,14 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [parentVC presentViewController:modalVC animated:YES completion:nil];
 }
 
-// 1. Hook iOS 14+ UIMenu factory method (for UIMenu native 3-dots menus)
-static UIMenu *(*orig_menuWithTitle_children)(Class, SEL, NSString *, NSArray<UIMenuElement *> *);
-static UIMenu *hook_menuWithTitle_children(Class self, SEL _cmd, NSString *title, NSArray<UIMenuElement *> *children) {
-    BOOL alreadyAdded = NO;
-    for (UIMenuElement *e in children) {
-        if ([e isKindOfClass:[UIAction class]] && [((UIAction *)e).title containsString:@"Auto Text"]) {
-            alreadyAdded = YES;
-            break;
-        }
-    }
-    
-    if (!alreadyAdded && children.count > 0) {
-        UIAction *autoTextAction = [UIAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
-            UIViewController *topVC = nil;
-            NSArray *windows = [UIApplication sharedApplication].windows;
-            for (UIWindow *win in windows) {
-                if (win.isKeyWindow) {
-                    topVC = win.rootViewController;
-                    break;
-                }
-            }
-            if (!topVC && windows.count > 0) {
-                UIWindow *firstWin = (UIWindow *)windows.firstObject;
-                topVC = firstWin.rootViewController;
-            }
-            while (topVC.presentedViewController) {
-                topVC = topVC.presentedViewController;
-            }
-            presentAutoTextModal(topVC);
-        }];
-        
-        NSMutableArray *newChildren = [children mutableCopy];
-        [newChildren addObject:autoTextAction];
-        children = [newChildren copy];
-    }
-    
-    return orig_menuWithTitle_children(self, _cmd, title, children);
-}
-
-// 2. Hook UIAlertController ActionSheet fallback
-static void (*orig_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, id);
-static void hook_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, id completion) {
-    if ([vcToPresent isKindOfClass:[UIAlertController class]]) {
-        UIAlertController *alert = (UIAlertController *)vcToPresent;
-        if (alert.preferredStyle == UIAlertControllerStyleActionSheet) {
-            BOOL alreadyAdded = NO;
-            for (UIAlertAction *act in alert.actions) {
-                if ([act.title containsString:@"Auto Text"]) {
-                    alreadyAdded = YES;
-                    break;
-                }
-            }
-            if (!alreadyAdded) {
-                __weak typeof(self) weakSelf = self;
-                UIAlertAction *autoTextAction = [UIAlertAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                    presentAutoTextModal(weakSelf);
-                }];
-                [alert addAction:autoTextAction];
-            }
-        }
-    }
-    orig_presentViewController(self, _cmd, vcToPresent, flag, completion);
-}
-
-// 3. Hook UIViewController viewDidAppear for auto-save
+// Hook UIViewController viewDidAppear
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
     
     NSString *className = NSStringFromClass([self class]);
+    
+    // 1. Auto-save export completion (ExportPreviewVC)
     if ([className containsString:@"ExportPreviewVC"] || [className containsString:@"ExportVC"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([self respondsToSelector:@selector(storeButton)]) {
@@ -198,28 +138,44 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             }
         });
     }
+    
+    // 2. Add floating "⚡ AUTO TEXT" button placed safely in top-center of editor screen
+    if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
+        if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
+            UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+            autoTextBtn.tag = AUTO_TEXT_BUTTON_TAG;
+            [autoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
+            [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+            autoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95];
+            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+            autoTextBtn.layer.cornerRadius = 14.0;
+            autoTextBtn.layer.shadowColor = [UIColor blackColor].CGColor;
+            autoTextBtn.layer.shadowOffset = CGSizeMake(0, 2);
+            autoTextBtn.layer.shadowOpacity = 0.4;
+            autoTextBtn.layer.shadowRadius = 4.0;
+            
+            CGFloat btnWidth = 100.0;
+            CGFloat btnHeight = 32.0;
+            CGFloat screenWidth = self.view.bounds.size.width;
+            
+            // Place top-center (y = 48) to avoid top-left and top-right buttons
+            autoTextBtn.frame = CGRectMake((screenWidth - btnWidth) / 2.0, 48.0, btnWidth, btnHeight);
+            autoTextBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
+            
+            __weak typeof(self) weakSelf = self;
+            [autoTextBtn addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+                presentAutoTextModal(weakSelf);
+            }] forControlEvents:UIControlEventTouchUpInside];
+            
+            [self.view addSubview:autoTextBtn];
+            [self.view bringSubviewToFront:autoTextBtn];
+        }
+    }
 }
 
 __attribute__((constructor)) static void initHooks() {
     Class vcClass = objc_getClass("UIViewController");
-    
-    // Hook viewDidAppear
-    Method m1 = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
-    orig_viewDidAppear = (void *)method_getImplementation(m1);
-    method_setImplementation(m1, (IMP)hook_viewDidAppear);
-    
-    // Hook presentViewController
-    Method m2 = class_getInstanceMethod(vcClass, @selector(presentViewController:animated:completion:));
-    orig_presentViewController = (void *)method_getImplementation(m2);
-    method_setImplementation(m2, (IMP)hook_presentViewController);
-    
-    // Hook UIMenu menuWithTitle:children: (iOS 14+ native 3-dots menus)
-    Class menuClass = objc_getClass("UIMenu");
-    if (menuClass) {
-        Method m3 = class_getClassMethod(menuClass, @selector(menuWithTitle:children:));
-        if (m3) {
-            orig_menuWithTitle_children = (void *)method_getImplementation(m3);
-            method_setImplementation(m3, (IMP)hook_menuWithTitle_children);
-        }
-    }
+    Method m = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
+    orig_viewDidAppear = (void *)method_getImplementation(m);
+    method_setImplementation(m, (IMP)hook_viewDidAppear);
 }
