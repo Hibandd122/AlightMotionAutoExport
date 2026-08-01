@@ -8,7 +8,7 @@
 static NSMutableArray<NSString *> *pendingTextLines = nil;
 static NSInteger currentLineIndex = 0;
 static UIButton *globalAutoTextBtn = nil;
-static NSTimer *batchAutoSplitTimer = nil;
+static BOOL isProcessingAutoBatch = NO;
 
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
@@ -106,7 +106,7 @@ static void showHUDLog(NSString *msg) {
             [topVC.view addSubview:hud];
         }
         
-        hud.text = [NSString stringWithFormat:@"🔍 RE TRACE:\n%@", msg];
+        hud.text = [NSString stringWithFormat:@"⚡ AUTO KEYFRAME:\n%@", msg];
         [topVC.view bringSubviewToFront:hud];
         
         [NSObject cancelPreviousPerformRequestsWithTarget:hud selector:@selector(removeFromSuperview) object:nil];
@@ -270,15 +270,18 @@ static void updateButtonState() {
     }
 }
 
-static void applyCurrentLineToInput(UIViewController *parentVC) {
-    if (!pendingTextLines || currentLineIndex >= pendingTextLines.count) return;
+static void applyTextToInputDirectly(UIViewController *parentVC, NSString *line) {
+    if (!line || line.length == 0) return;
     
-    NSString *line = pendingTextLines[currentLineIndex];
     [UIPasteboard generalPasteboard].string = line;
     
     UIView *inputView = findTargetInputView(parentVC.view);
     if (!inputView && parentVC.parentViewController) {
         inputView = findTargetInputView(parentVC.parentViewController.view);
+    }
+    if (!inputView) {
+        UIViewController *top = getTopViewController();
+        if (top) inputView = findTargetInputView(top.view);
     }
     
     if ([inputView isKindOfClass:[UITextView class]]) {
@@ -292,34 +295,54 @@ static void applyCurrentLineToInput(UIViewController *parentVC) {
         tf.text = line;
         [tf sendActionsForControlEvents:UIControlEventEditingChanged];
     }
-    
-    currentLineIndex++;
-    if (currentLineIndex >= pendingTextLines.count) {
-        pendingTextLines = nil;
-        currentLineIndex = 0;
-    }
-    updateButtonState();
 }
 
-static void executeOneStep(UIViewController *topVC) {
-    if (!pendingTextLines || currentLineIndex >= pendingTextLines.count) {
-        if (batchAutoSplitTimer) {
-            [batchAutoSplitTimer invalidate];
-            batchAutoSplitTimer = nil;
-        }
+static void processLineAtIndex(NSInteger index) {
+    if (!pendingTextLines || index >= pendingTextLines.count) {
+        pendingTextLines = nil;
+        currentLineIndex = 0;
+        isProcessingAutoBatch = NO;
+        updateButtonState();
+        showHUDLog(@"✅ Tách & Nạp Text Hoàn Tất!");
         return;
     }
     
-    if (currentLineIndex > 0) {
-        jumpToNextMarkerOrKeyframe();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                applyCurrentLineToInput(topVC);
-            });
+    currentLineIndex = index;
+    updateButtonState();
+    
+    if (index == 0) {
+        // Step 1: Nạp dòng 1 vào Layer ban đầu
+        UIViewController *top = getTopViewController();
+        applyTextToInputDirectly(top, pendingTextLines[0]);
+        showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng 1/%lu: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
+        
+        // Đợi 0.45s chuyển sang dòng 2
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            processLineAtIndex(index + 1);
         });
     } else {
-        applyCurrentLineToInput(topVC);
+        // các dòng tiếp theo:
+        // 1. Nhảy mốc Marker tiếp theo
+        showHUDLog([NSString stringWithFormat:@"⏩ Nhảy mốc Marker dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
+        jumpToNextMarkerOrKeyframe();
+        
+        // 2. Đợi 0.35s để con trỏ Timeline nhảy cố định ➔ Gọi Cắt đôi Layer
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
+            triggerAutoSplitLayer();
+            
+            // 3. Đợi 0.35s để Alight Motion cập nhật Layer mới ➔ Nạp câu chữ tương ứng
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIViewController *top = getTopViewController();
+                applyTextToInputDirectly(top, pendingTextLines[index]);
+                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
+                
+                // 4. Đợi 0.45s tiếp tục sang dòng tiếp theo
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    processLineAtIndex(index + 1);
+                });
+            });
+        });
     }
 }
 
@@ -342,13 +365,12 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     }
     
     if (autoBatch) {
-        if (batchAutoSplitTimer) [batchAutoSplitTimer invalidate];
-        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.45 repeats:YES block:^(NSTimer * _Nonnull t) {
-            UIViewController *top = getTopViewController();
-            executeOneStep(top);
-        }];
+        isProcessingAutoBatch = YES;
+        processLineAtIndex(0);
     } else {
-        applyCurrentLineToInput(parentVC);
+        applyTextToInputDirectly(parentVC, pendingTextLines[0]);
+        currentLineIndex = 1;
+        updateButtonState();
     }
 }
 
@@ -501,7 +523,7 @@ static BOOL isDragging = NO;
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        executeOneStep(top);
+        processLineAtIndex(currentLineIndex);
     } else {
         presentAutoTextModal(top);
     }
