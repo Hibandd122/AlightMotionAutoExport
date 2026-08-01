@@ -3,7 +3,6 @@
 #import <objc/runtime.h>
 
 #define AUTO_TEXT_BUTTON_TAG 998877
-#define DISCORD_WEBHOOK_URL @"https://discord.com/api/webhooks/1533181386905878528/kwxuVirdD0STNyx55H6bz_xUwhyTDIrZ19WJs6CQ61-IIbKYj2tD2_LQtgw9O4aETXnu"
 
 static NSMutableArray<NSString *> *pendingTextLines = nil;
 static NSInteger currentLineIndex = 0;
@@ -56,30 +55,6 @@ static UIViewController *findViewControllerOfClass(UIViewController *root, NSStr
         }
     }
     return nil;
-}
-
-// Discord Webhook function (preserved for future use)
-__attribute__((unused)) static void sendDiscordLog(NSString *msg) {
-    if (!msg || msg.length == 0) return;
-    
-    NSURL *url = [NSURL URLWithString:DISCORD_WEBHOOK_URL];
-    if (!url) return;
-    
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-    [req setHTTPMethod:@"POST"];
-    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    
-    NSDictionary *bodyDict = @{
-        @"content": [NSString stringWithFormat:@"🔍 **[AlightMotion MOD Tracer]**\n```\n%@\n```", msg]
-    };
-    
-    NSError *err = nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:bodyDict options:0 error:&err];
-    if (jsonData) {
-        [req setHTTPBody:jsonData];
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {}];
-        [task resume];
-    }
 }
 
 static void showHUDLog(NSString *msg) {
@@ -619,7 +594,7 @@ static BOOL isDragging = NO;
 }
 @end
 
-// Hook UIApplication sendAction:to:from:forEvent: for UI tracing (Discord Webhook temporarily paused)
+// Hook UIApplication sendAction:to:from:forEvent: for UI tracing
 static BOOL (*orig_sendAction)(UIApplication *, SEL, SEL, id, id, UIEvent *);
 static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target, id sender, UIEvent *event) {
     if (action) {
@@ -630,7 +605,6 @@ static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target
             NSString *logMsg = [NSString stringWithFormat:@"Target: %@ | Action: %@", targetClass, selName];
             NSLog(@"[AlightMotion MOD TRACER] %@", logMsg);
             showHUDLog(logMsg);
-            // sendDiscordLog(logMsg); // Temporarily paused per user request
         }
     }
     return orig_sendAction(self, _cmd, action, target, sender, event);
