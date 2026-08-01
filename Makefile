@@ -5,10 +5,9 @@ TARGET = iphone:clang:14.5:14.0
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = AlightMotionAutoExport
-
-AlightMotionAutoExport_FILES = Tweak.xm
+LIBRARY_NAME = AlightMotionAutoExport
+AlightMotionAutoExport_FILES = Tweak.m
 AlightMotionAutoExport_CFLAGS = -fobjc-arc
 AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications
 
-include $(THEOS_MAKE_PATH)/tweak.mk
+include $(THEOS_MAKE_PATH)/library.mk

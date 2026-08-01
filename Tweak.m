@@ -1,10 +1,11 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <objc/runtime.h>
 
 static void sendExportNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion";
-    content.body = @"Export completed and video saved automatically.";
+    content.body = @"Xuất video hoàn tất. Đã tự động lưu vào Cuộn Camera.";
     content.sound = [UNNotificationSound defaultSound];
     
     UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1.0 repeats:NO];
@@ -15,9 +16,8 @@ static void sendExportNotification() {
 
 static BOOL hasSavedRecentVideo = NO;
 
-%hook UIActivityViewController
-
-- (instancetype)initWithActivityItems:(NSArray *)activityItems applicationActivities:(NSArray<UIActivity *> *)applicationActivities {
+static id (*orig_initWithActivityItems)(UIActivityViewController *, SEL, NSArray *, NSArray *);
+static id hook_initWithActivityItems(UIActivityViewController *self, SEL _cmd, NSArray *activityItems, NSArray *applicationActivities) {
     for (id item in activityItems) {
         if ([item isKindOfClass:[NSURL class]]) {
             NSURL *url = (NSURL *)item;
@@ -25,10 +25,15 @@ static BOOL hasSavedRecentVideo = NO;
             if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"]) {
                 if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(url.path) && !hasSavedRecentVideo) {
                     UISaveVideoAtPathToSavedPhotosAlbum(url.path, nil, NULL, NULL);
-                    sendExportNotification();
+                    
+                    [[UNUserNotificationCenter currentNotificationCenter] requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge) completionHandler:^(BOOL granted, NSError * _Nullable error) {
+                        if (granted) {
+                            sendExportNotification();
+                        }
+                    }];
+                    
                     hasSavedRecentVideo = YES;
                     
-                    // Reset flag after 5 seconds to allow future saves
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                         hasSavedRecentVideo = NO;
                     });
@@ -36,18 +41,14 @@ static BOOL hasSavedRecentVideo = NO;
             }
         }
     }
-    return %orig;
+    return orig_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-%end
-
-%hook UIApplication
-
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
-    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
-                          completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
-    return %orig;
+__attribute__((constructor)) static void initHooks() {
+    Class cls = objc_getClass("UIActivityViewController");
+    SEL sel = @selector(initWithActivityItems:applicationActivities:);
+    Method m = class_getInstanceMethod(cls, sel);
+    
+    orig_initWithActivityItems = (void *)method_getImplementation(m);
+    method_setImplementation(m, (IMP)hook_initWithActivityItems);
 }
-
-%end
