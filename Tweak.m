@@ -13,6 +13,8 @@ static void sendCompletionNotification() {
 }
 
 static void presentAutoTextModal(UIViewController *parentVC) {
+    if (!parentVC) return;
+    
     UIViewController *modalVC = [[UIViewController alloc] init];
     modalVC.modalPresentationStyle = UIModalPresentationOverCurrentContext;
     modalVC.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
@@ -113,43 +115,60 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [parentVC presentViewController:modalVC animated:YES completion:nil];
 }
 
-// Hook presentViewController to inject "⚡ Auto Text" into 3-dots ActionSheet Menu
+// 1. Hook iOS 14+ UIMenu factory method (for UIMenu native 3-dots menus)
+static UIMenu *(*orig_menuWithTitle_children)(Class, SEL, NSString *, NSArray<UIMenuElement *> *);
+static UIMenu *hook_menuWithTitle_children(Class self, SEL _cmd, NSString *title, NSArray<UIMenuElement *> *children) {
+    BOOL alreadyAdded = NO;
+    for (UIMenuElement *e in children) {
+        if ([e isKindOfClass:[UIAction class]] && [((UIAction *)e).title containsString:@"Auto Text"]) {
+            alreadyAdded = YES;
+            break;
+        }
+    }
+    
+    if (!alreadyAdded && children.count > 0) {
+        UIAction *autoTextAction = [UIAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" image:[UIImage systemImageName:@"wand.and.stars"] identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            UIViewController *topVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+            while (topVC.presentedViewController) {
+                topVC = topVC.presentedViewController;
+            }
+            presentAutoTextModal(topVC);
+        }];
+        
+        NSMutableArray *newChildren = [children mutableCopy];
+        [newChildren addObject:autoTextAction];
+        children = [newChildren copy];
+    }
+    
+    return orig_menuWithTitle_children(self, _cmd, title, children);
+}
+
+// 2. Hook UIAlertController ActionSheet fallback
 static void (*orig_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, id);
 static void hook_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, id completion) {
     if ([vcToPresent isKindOfClass:[UIAlertController class]]) {
         UIAlertController *alert = (UIAlertController *)vcToPresent;
         if (alert.preferredStyle == UIAlertControllerStyleActionSheet) {
-            BOOL isMoreMenu = NO;
-            for (UIAlertAction *action in alert.actions) {
-                NSString *title = action.title;
-                if ([title containsString:@"Element"] || [title containsString:@"Phần tử"] || [title containsString:@"Save"] || [title containsString:@"Lưu"] || [title containsString:@"Copy"] || [title containsString:@"Sao chép"]) {
-                    isMoreMenu = YES;
+            BOOL alreadyAdded = NO;
+            for (UIAlertAction *act in alert.actions) {
+                if ([act.title containsString:@"Auto Text"]) {
+                    alreadyAdded = YES;
                     break;
                 }
             }
-            
-            if (isMoreMenu || alert.actions.count >= 2) {
-                BOOL alreadyAdded = NO;
-                for (UIAlertAction *act in alert.actions) {
-                    if ([act.title containsString:@"Auto Text"]) {
-                        alreadyAdded = YES;
-                        break;
-                    }
-                }
-                if (!alreadyAdded) {
-                    __weak typeof(self) weakSelf = self;
-                    UIAlertAction *autoTextAction = [UIAlertAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                        presentAutoTextModal(weakSelf);
-                    }];
-                    [alert addAction:autoTextAction];
-                }
+            if (!alreadyAdded) {
+                __weak typeof(self) weakSelf = self;
+                UIAlertAction *autoTextAction = [UIAlertAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                    presentAutoTextModal(weakSelf);
+                }];
+                [alert addAction:autoTextAction];
             }
         }
     }
     orig_presentViewController(self, _cmd, vcToPresent, flag, completion);
 }
 
-// Hook UIViewController viewDidAppear for auto-save
+// 3. Hook UIViewController viewDidAppear for auto-save
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
@@ -173,13 +192,23 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
 __attribute__((constructor)) static void initHooks() {
     Class vcClass = objc_getClass("UIViewController");
     
-    // 1. Hook viewDidAppear
+    // Hook viewDidAppear
     Method m1 = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     orig_viewDidAppear = (void *)method_getImplementation(m1);
     method_setImplementation(m1, (IMP)hook_viewDidAppear);
     
-    // 2. Hook presentViewController to intercept 3-dots ActionSheet Menu
+    // Hook presentViewController
     Method m2 = class_getInstanceMethod(vcClass, @selector(presentViewController:animated:completion:));
     orig_presentViewController = (void *)method_getImplementation(m2);
     method_setImplementation(m2, (IMP)hook_presentViewController);
+    
+    // Hook UIMenu menuWithTitle:children: (iOS 14+ native 3-dots menus)
+    Class menuClass = objc_getClass("UIMenu");
+    if (menuClass) {
+        Method m3 = class_getClassMethod(menuClass, @selector(menuWithTitle:children:));
+        if (m3) {
+            orig_menuWithTitle_children = (void *)method_getImplementation(m3);
+            method_setImplementation(m3, (IMP)hook_menuWithTitle_children);
+        }
+    }
 }
