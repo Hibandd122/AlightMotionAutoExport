@@ -166,8 +166,8 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             autoTextBtn.layer.shadowOpacity = 0.4;
             autoTextBtn.layer.shadowRadius = 4.0;
             
-            // Place at Top-Left (x = 16, y = 50) away from top-right corner
-            autoTextBtn.frame = CGRectMake(16.0, 50.0, 95.0, 30.0);
+            // Place at top-right below Safe Area / Dynamic Island (x = screenWidth - 115, y = 85)
+            autoTextBtn.frame = CGRectMake(screenWidth - 115.0, 85.0, 100.0, 32.0);
             
             // Add Pan Gesture so user can drag it ANYWHERE on screen
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextDragHandler class] action:@selector(handlePan:)];
