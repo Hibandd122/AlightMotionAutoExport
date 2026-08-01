@@ -59,7 +59,7 @@ static UIViewController *findViewControllerOfClass(UIViewController *root, NSStr
 }
 
 // Discord Webhook function (preserved for future use)
-static void sendDiscordLog(NSString *msg) {
+__attribute__((unused)) static void sendDiscordLog(NSString *msg) {
     if (!msg || msg.length == 0) return;
     
     NSURL *url = [NSURL URLWithString:DISCORD_WEBHOOK_URL];
