@@ -312,7 +312,7 @@ static BOOL jumpToNextMarkerOrKeyframe() {
 static void updateButtonState() {
     if (!globalAutoTextBtn) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSString *title = [NSString stringWithFormat:@"⚡ MARKER (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        NSString *title = [NSString stringWithFormat:@"⚡ CẮT & NẠP (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
         [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
         globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95];
     } else {
@@ -550,7 +550,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     
     [btnAutoAll addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         NSString *raw = textView.text;
-        startSequentialTextProcess(parentVC, raw, YES);
+        startSequentialTextProcess(parentVC, raw, NO);
         [modalVC dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     
@@ -579,7 +579,22 @@ static BOOL isDragging = NO;
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        processLineAtIndex(currentLineIndex);
+        if (currentLineIndex == 0) {
+            applyTextToInputDirectly(top, pendingTextLines[0]);
+            showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng 1/%lu: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
+            currentLineIndex++;
+            updateButtonState();
+        } else {
+            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer & Nạp dòng %ld/%lu...", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count]);
+            ensureTimelineLayerSelected();
+            BOOL splitOk = triggerAutoSplitLayer();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                applyTextToInputDirectly(top, pendingTextLines[currentLineIndex]);
+                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count, pendingTextLines[currentLineIndex]]);
+                currentLineIndex++;
+                updateButtonState();
+            });
+        }
     } else {
         presentAutoTextModal(top);
     }
