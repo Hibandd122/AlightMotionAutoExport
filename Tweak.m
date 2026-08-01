@@ -117,6 +117,18 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [parentVC presentViewController:modalVC animated:YES completion:nil];
 }
 
+// Pan Gesture to drag floating button anywhere on screen
+@interface AutoTextDragHandler : NSObject
+@end
+@implementation AutoTextDragHandler
++ (void)handlePan:(UIPanGestureRecognizer *)pan {
+    UIView *btn = pan.view;
+    CGPoint translation = [pan translationInView:btn.superview];
+    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
+    [pan setTranslation:CGPointZero inView:btn.superview];
+}
+@end
+
 // Hook UIViewController viewDidAppear
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
@@ -139,7 +151,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add floating "⚡ AUTO TEXT" button placed safely in top-center of editor screen
+    // 2. Add DRAGGABLE "⚡ AUTO TEXT" button placed away from original position
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -147,20 +159,19 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             [autoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
             [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
             autoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95];
-            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
             autoTextBtn.layer.cornerRadius = 14.0;
             autoTextBtn.layer.shadowColor = [UIColor blackColor].CGColor;
             autoTextBtn.layer.shadowOffset = CGSizeMake(0, 2);
             autoTextBtn.layer.shadowOpacity = 0.4;
             autoTextBtn.layer.shadowRadius = 4.0;
             
-            CGFloat btnWidth = 100.0;
-            CGFloat btnHeight = 32.0;
-            CGFloat screenWidth = self.view.bounds.size.width;
+            // Place at Top-Left (x = 16, y = 50) away from top-right corner
+            autoTextBtn.frame = CGRectMake(16.0, 50.0, 95.0, 30.0);
             
-            // Place top-center (y = 48) to avoid top-left and top-right buttons
-            autoTextBtn.frame = CGRectMake((screenWidth - btnWidth) / 2.0, 48.0, btnWidth, btnHeight);
-            autoTextBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
+            // Add Pan Gesture so user can drag it ANYWHERE on screen
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextDragHandler class] action:@selector(handlePan:)];
+            [autoTextBtn addGestureRecognizer:pan];
             
             __weak typeof(self) weakSelf = self;
             [autoTextBtn addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
