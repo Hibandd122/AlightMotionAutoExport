@@ -8,6 +8,6 @@ include $(THEOS)/makefiles/common.mk
 LIBRARY_NAME = AlightMotionAutoExport
 AlightMotionAutoExport_FILES = Tweak.m
 AlightMotionAutoExport_CFLAGS = -fobjc-arc
-AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications AVFoundation
+AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications
 
 include $(THEOS_MAKE_PATH)/library.mk
