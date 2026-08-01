@@ -120,7 +120,10 @@ static UIView *findTextInputViewInController(UIViewController *root) {
         }
     }
 
-    for (UIViewController *child in root.childViewControllers) {
+    // The text editor is a child of EditTextInspectorVC/EditTextPanelVC.  Walk
+    // the newest child first so a stale, still-retained TextInputVC cannot win
+    // over the input belonging to the layer that was just selected.
+    for (UIViewController *child in [root.childViewControllers reverseObjectEnumerator]) {
         UIView *input = findTextInputViewInController(child);
         if (input) return input;
     }
@@ -192,6 +195,68 @@ static UICollectionView *findSelectedTimelineCollectionView(UIView *view) {
     return nil;
 }
 
+static BOOL triggerTimelineCellSelection(UIView *cell);
+
+static id valueForKeySafely(id object, NSString *key) {
+    if (!object || key.length == 0) return nil;
+    @try {
+        return [object valueForKey:key];
+    } @catch (NSException *exception) {
+        (void)exception;
+        return nil;
+    }
+}
+
+static UICollectionView *timelineCollectionViewForController(UIViewController *timelineVC) {
+    // IPA evidence: TimelineViewController has an actual `timelineView`
+    // outlet. Prefer it over recursively picking an arbitrary collection view.
+    id timelineView = valueForKeySafely(timelineVC, @"timelineView");
+    if ([timelineView isKindOfClass:[UICollectionView class]]) {
+        return (UICollectionView *)timelineView;
+    }
+    return findSelectedTimelineCollectionView(timelineVC.view);
+}
+
+static NSIndexPath *selectedTimelineIndexPath(UIViewController *timelineVC, UICollectionView *collectionView) {
+    NSIndexPath *selected = collectionView.indexPathsForSelectedItems.firstObject;
+    if (selected) return selected;
+
+    // TimelineLayout keeps the app's selected index path separately from
+    // UICollectionView's visual selection state.
+    id layout = valueForKeySafely(timelineVC, @"timelineLayout");
+    id layoutSelection = valueForKeySafely(layout, @"selectedIndexPath");
+    if ([layoutSelection isKindOfClass:[NSIndexPath class]]) return layoutSelection;
+    return nil;
+}
+
+static BOOL callTimelineSelectionDelegate(id timelineView, UICollectionView *collectionView, NSIndexPath *indexPath) {
+    SEL selector = @selector(collectionView:didSelectItemAtIndexPath:);
+    if (!timelineView || ![timelineView respondsToSelector:selector]) return NO;
+    IMP imp = [timelineView methodForSelector:selector];
+    void (*func)(id, SEL, UICollectionView *, NSIndexPath *) = (void *)imp;
+    func(timelineView, selector, collectionView, indexPath);
+    return YES;
+}
+
+static BOOL triggerExactTimelineCellTap(UICollectionViewCell *cell) {
+    if (!cell) return NO;
+
+    id gestureObject = valueForKeySafely(cell, @"selectGesture");
+    if ([gestureObject isKindOfClass:[UIGestureRecognizer class]]) {
+        SEL selector = @selector(onTapCellWithGesture:);
+        if ([cell respondsToSelector:selector]) {
+            IMP imp = [cell methodForSelector:selector];
+            void (*func)(id, SEL, UIGestureRecognizer *) = (void *)imp;
+            func(cell, selector, (UIGestureRecognizer *)gestureObject);
+            return YES;
+        }
+    }
+
+    // Keep the target/action fallback for a cell whose Swift class is exposed
+    // through a subclass at runtime.
+    return triggerTimelineCellSelection(cell);
+}
+
 static BOOL triggerTimelineCellSelection(UIView *cell) {
     if (!cell) return NO;
     UIGestureRecognizer *selectGesture = nil;
@@ -236,22 +301,37 @@ static BOOL selectNextTimelineLayer() {
     if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
     if (!timelineVC) return NO;
 
-    UICollectionView *collectionView = findSelectedTimelineCollectionView(timelineVC.view);
-    NSIndexPath *selected = collectionView.indexPathsForSelectedItems.firstObject;
-    if (!selected) return NO;
+    UICollectionView *collectionView = timelineCollectionViewForController(timelineVC);
+    if (!collectionView) {
+        showHUDLog(@"Khong tim thay TimelineView cua app");
+        return NO;
+    }
+
+    NSIndexPath *selected = selectedTimelineIndexPath(timelineVC, collectionView);
+    if (!selected) {
+        showHUDLog(@"Timeline chua co layer dang chon");
+        return NO;
+    }
 
     NSInteger nextItem = selected.item + 1;
     if (nextItem >= [collectionView numberOfItemsInSection:selected.section]) return NO;
 
     NSIndexPath *next = [NSIndexPath indexPathForItem:nextItem inSection:selected.section];
-    [collectionView deselectItemAtIndexPath:selected animated:NO];
+    [collectionView scrollToItemAtIndexPath:next atScrollPosition:UICollectionViewScrollPositionCenteredVertically animated:NO];
+    [collectionView layoutIfNeeded];
     [collectionView selectItemAtIndexPath:next animated:NO scrollPosition:UICollectionViewScrollPositionNone];
-    if ([collectionView.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
-        [collectionView.delegate collectionView:collectionView didSelectItemAtIndexPath:next];
-    }
+
     UICollectionViewCell *nextCell = [collectionView cellForItemAtIndexPath:next];
-    triggerTimelineCellSelection(nextCell);
-    return YES;
+    BOOL didTapCell = triggerExactTimelineCellTap(nextCell);
+    BOOL didSelectInTimeline = callTimelineSelectionDelegate(collectionView, collectionView, next);
+    if (!didSelectInTimeline) didSelectInTimeline = callTimelineSelectionDelegate(collectionView.delegate, collectionView, next);
+
+    showHUDLog([NSString stringWithFormat:@"Mo layer %ld -> %ld (%@%@)",
+                (long)selected.item + 1,
+                (long)next.item + 1,
+                didTapCell ? @"tap" : @"select",
+                didSelectInTimeline ? @" + app" : @""]);
+    return didTapCell || didSelectInTimeline;
 }
 
 static BOOL triggerAutoSplitLayer() {
@@ -370,12 +450,14 @@ static void processPrecutTextAtIndex(NSInteger index) {
         return;
     }
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    // Selection updates the Swift editor asynchronously. Give it enough time
+    // to attach the TextInputVC for the newly active layer before writing.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIViewController *top = getTopViewController();
         applyTextToInputDirectly(top, pendingTextLines[index]);
         showHUDLog([NSString stringWithFormat:@"Nap Text Layer %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             processPrecutTextAtIndex(index + 1);
         });
     });
