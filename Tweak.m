@@ -145,6 +145,21 @@ static BOOL callSelectorOnTarget(id target, SEL sel) {
     return NO;
 }
 
+static BOOL callSelectorOnTargetWithObject(id target, SEL sel, id object) {
+    if (!target || ![target respondsToSelector:sel]) return NO;
+    IMP imp = [target methodForSelector:sel];
+    Method method = class_getInstanceMethod([target class], sel);
+    int args = method ? method_getNumberOfArguments(method) : 2;
+    if (args > 2) {
+        void (*func)(id, SEL, id) = (void *)imp;
+        func(target, sel, object);
+    } else {
+        void (*func)(id, SEL) = (void *)imp;
+        func(target, sel);
+    }
+    return YES;
+}
+
 static BOOL sendExactActionToButton(UIView *view, NSString *actionName) {
     if (!view) return NO;
     if ([view isKindOfClass:[UIButton class]] && isViewCurrentlyVisible(view)) {
@@ -177,6 +192,39 @@ static UICollectionView *findSelectedTimelineCollectionView(UIView *view) {
     return nil;
 }
 
+static BOOL triggerTimelineCellSelection(UIView *cell) {
+    if (!cell) return NO;
+    UIGestureRecognizer *selectGesture = nil;
+    @try {
+        id gesture = [cell valueForKey:@"selectGesture"];
+        if ([gesture isKindOfClass:[UIGestureRecognizer class]]) {
+            selectGesture = (UIGestureRecognizer *)gesture;
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+    }
+    if (!selectGesture) return NO;
+
+    @try {
+        NSArray *targets = [selectGesture valueForKey:@"_targets"];
+        for (id targetInfo in targets) {
+            id target = [targetInfo valueForKey:@"_target"];
+            id actionValue = [targetInfo valueForKey:@"_action"];
+            SEL action = NULL;
+            if ([actionValue isKindOfClass:[NSString class]]) {
+                action = NSSelectorFromString((NSString *)actionValue);
+            } else if ([actionValue isKindOfClass:[NSValue class]]) {
+                [actionValue getValue:&action];
+            }
+            if (!action) continue;
+            if (callSelectorOnTargetWithObject(target, action, selectGesture)) return YES;
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+    }
+    return NO;
+}
+
 static BOOL selectNextTimelineLayer() {
     UIViewController *topVC = getTopViewController();
     UIWindow *keyWin = nil;
@@ -201,6 +249,8 @@ static BOOL selectNextTimelineLayer() {
     if ([collectionView.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
         [collectionView.delegate collectionView:collectionView didSelectItemAtIndexPath:next];
     }
+    UICollectionViewCell *nextCell = [collectionView cellForItemAtIndexPath:next];
+    triggerTimelineCellSelection(nextCell);
     return YES;
 }
 
