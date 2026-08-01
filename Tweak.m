@@ -2,6 +2,8 @@
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
+#define AUTO_TEXT_BUTTON_TAG 998877
+
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -12,11 +14,114 @@ static void sendCompletionNotification() {
     [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:nil];
 }
 
+static void presentAutoTextModal(UIViewController *parentVC) {
+    UIViewController *modalVC = [[UIViewController alloc] init];
+    modalVC.modalPresentationStyle = UIModalPresentationOverCurrentContext;
+    modalVC.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    modalVC.view.backgroundColor = [UIColor colorWithWhite:0 alpha:0.65];
+    
+    UIView *card = [[UIView alloc] init];
+    card.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.14 alpha:1.0];
+    card.layer.cornerRadius = 18.0;
+    card.layer.borderWidth = 1.0;
+    card.layer.borderColor = [UIColor colorWithRed:0.20 green:0.20 blue:0.25 alpha:1.0].CGColor;
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    [modalVC.view addSubview:card];
+    
+    UILabel *titleLbl = [[UILabel alloc] init];
+    titleLbl.text = @"⚡ Auto Keyframe Text";
+    titleLbl.textColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
+    titleLbl.font = [UIFont boldSystemFontOfSize:18.0];
+    titleLbl.textAlignment = NSTextAlignmentCenter;
+    titleLbl.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:titleLbl];
+    
+    UILabel *subLbl = [[UILabel alloc] init];
+    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để tách theo mốc Keyframe:";
+    subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+    subLbl.font = [UIFont systemFontOfSize:13.0];
+    subLbl.numberOfLines = 0;
+    subLbl.textAlignment = NSTextAlignmentCenter;
+    subLbl.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:subLbl];
+    
+    UITextView *textView = [[UITextView alloc] init];
+    textView.backgroundColor = [UIColor colorWithRed:0.14 green:0.14 blue:0.18 alpha:1.0];
+    textView.textColor = [UIColor whiteColor];
+    textView.font = [UIFont systemFontOfSize:15.0];
+    textView.layer.cornerRadius = 10.0;
+    textView.layer.borderWidth = 1.0;
+    textView.layer.borderColor = [UIColor colorWithWhite:0.2 alpha:1.0].CGColor;
+    textView.translatesAutoresizingMaskIntoConstraints = NO;
+    textView.text = @"Text 1\nText 2\nText 3";
+    [card addSubview:textView];
+    
+    UIButton *btnProcess = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btnProcess setTitle:@"TÁCH KEYFRAME" forState:UIControlStateNormal];
+    [btnProcess setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    btnProcess.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
+    btnProcess.titleLabel.font = [UIFont boldSystemFontOfSize:14.0];
+    btnProcess.layer.cornerRadius = 10.0;
+    btnProcess.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:btnProcess];
+    
+    UIButton *btnCancel = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btnCancel setTitle:@"HỦY" forState:UIControlStateNormal];
+    [btnCancel setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+    btnCancel.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+    btnCancel.titleLabel.font = [UIFont systemFontOfSize:14.0];
+    btnCancel.layer.cornerRadius = 10.0;
+    btnCancel.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:btnCancel];
+    
+    [NSLayoutConstraint activateConstraints:@[
+        [card.centerXAnchor constraintEqualToAnchor:modalVC.view.centerXAnchor],
+        [card.centerYAnchor constraintEqualToAnchor:modalVC.view.centerYAnchor constant:-30],
+        [card.widthAnchor constraintEqualToConstant:320],
+        [card.heightAnchor constraintEqualToConstant:310],
+        
+        [titleLbl.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
+        [titleLbl.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [titleLbl.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        
+        [subLbl.topAnchor constraintEqualToAnchor:titleLbl.bottomAnchor constant:6],
+        [subLbl.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [subLbl.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        
+        [textView.topAnchor constraintEqualToAnchor:subLbl.bottomAnchor constant:12],
+        [textView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [textView.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        [textView.heightAnchor constraintEqualToConstant:120],
+        
+        [btnProcess.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+        [btnProcess.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        [btnProcess.widthAnchor constraintEqualToConstant:160],
+        [btnProcess.heightAnchor constraintEqualToConstant:40],
+        
+        [btnCancel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+        [btnCancel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [btnCancel.trailingAnchor constraintEqualToAnchor:btnProcess.leadingAnchor constant:-10],
+        [btnCancel.heightAnchor constraintEqualToConstant:40]
+    ]];
+    
+    [btnCancel addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [modalVC dismissViewControllerAnimated:YES completion:nil];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    
+    [btnProcess addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [modalVC dismissViewControllerAnimated:YES completion:nil];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    
+    [parentVC presentViewController:modalVC animated:YES completion:nil];
+}
+
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
     
     NSString *className = NSStringFromClass([self class]);
+    
+    // 1. Auto-save export completion (ExportPreviewVC)
     if ([className containsString:@"ExportPreviewVC"] || [className containsString:@"ExportVC"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([self respondsToSelector:@selector(storeButton)]) {
@@ -29,6 +134,28 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
                 }
             }
         });
+    }
+    
+    // 2. Add isolated "⚡ AUTO TEXT" button in Text Inspector VC
+    if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"]) {
+        if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
+            UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+            autoTextBtn.tag = AUTO_TEXT_BUTTON_TAG;
+            [autoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
+            [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+            autoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
+            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
+            autoTextBtn.layer.cornerRadius = 8.0;
+            autoTextBtn.frame = CGRectMake(self.view.bounds.size.width - 110, 10, 95, 30);
+            autoTextBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
+            
+            __weak typeof(self) weakSelf = self;
+            [autoTextBtn addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+                presentAutoTextModal(weakSelf);
+            }] forControlEvents:UIControlEventTouchUpInside];
+            
+            [self.view addSubview:autoTextBtn];
+        }
     }
 }
 
