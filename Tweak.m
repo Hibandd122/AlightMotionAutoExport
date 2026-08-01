@@ -33,8 +33,53 @@ static UIViewController *getTopViewController() {
     return top;
 }
 
-static void presentAutoTextModal() {
-    UIViewController *parentVC = getTopViewController();
+static UIView *findTargetInputView(UIView *view) {
+    if (!view) return nil;
+    if (([view isKindOfClass:[UITextView class]] || [view isKindOfClass:[UITextField class]]) && view.tag != 8899) {
+        return view;
+    }
+    for (UIView *sub in view.subviews) {
+        UIView *res = findTargetInputView(sub);
+        if (res) return res;
+    }
+    return nil;
+}
+
+static void applyTextToAlightMotion(UIViewController *parentVC, NSString *rawText) {
+    if (rawText.length == 0) return;
+    
+    NSArray<NSString *> *lines = [rawText componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString *> *validLines = [NSMutableArray array];
+    for (NSString *l in lines) {
+        NSString *trimmed = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (trimmed.length > 0) {
+            [validLines addObject:trimmed];
+        }
+    }
+    if (validLines.count == 0) return;
+    
+    NSString *joinedText = [validLines componentsJoinedByString:@"\n"];
+    [UIPasteboard generalPasteboard].string = joinedText;
+    
+    UIView *inputView = findTargetInputView(parentVC.view);
+    if (!inputView && parentVC.parentViewController) {
+        inputView = findTargetInputView(parentVC.parentViewController.view);
+    }
+    
+    if ([inputView isKindOfClass:[UITextView class]]) {
+        UITextView *tv = (UITextView *)inputView;
+        tv.text = joinedText;
+        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+            [tv.delegate textViewDidChange:tv];
+        }
+    } else if ([inputView isKindOfClass:[UITextField class]]) {
+        UITextField *tf = (UITextField *)inputView;
+        tf.text = [validLines firstObject];
+        [tf sendActionsForControlEvents:UIControlEventEditingChanged];
+    }
+}
+
+static void presentAutoTextModal(UIViewController *parentVC) {
     if (!parentVC) return;
     
     UIViewController *modalVC = [[UIViewController alloc] init];
@@ -59,7 +104,7 @@ static void presentAutoTextModal() {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để tách theo mốc Keyframe:";
+    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để tự động nạp vào Alight Motion:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -68,6 +113,7 @@ static void presentAutoTextModal() {
     [card addSubview:subLbl];
     
     UITextView *textView = [[UITextView alloc] init];
+    textView.tag = 8899;
     textView.backgroundColor = [UIColor colorWithRed:0.14 green:0.14 blue:0.18 alpha:1.0];
     textView.textColor = [UIColor whiteColor];
     textView.font = [UIFont systemFontOfSize:15.0];
@@ -79,7 +125,7 @@ static void presentAutoTextModal() {
     [card addSubview:textView];
     
     UIButton *btnProcess = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnProcess setTitle:@"TÁCH KEYFRAME" forState:UIControlStateNormal];
+    [btnProcess setTitle:@"TÁCH & NẠP TEXT" forState:UIControlStateNormal];
     [btnProcess setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     btnProcess.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
     btnProcess.titleLabel.font = [UIFont boldSystemFontOfSize:14.0];
@@ -131,6 +177,8 @@ static void presentAutoTextModal() {
     }] forControlEvents:UIControlEventTouchUpInside];
     
     [btnProcess addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        NSString *raw = textView.text;
+        applyTextToAlightMotion(parentVC, raw);
         [modalVC dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     
@@ -157,7 +205,8 @@ static BOOL isDragging = NO;
 }
 
 - (void)buttonTapped:(UIButton *)sender {
-    presentAutoTextModal();
+    UIViewController *top = getTopViewController();
+    presentAutoTextModal(top);
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -200,7 +249,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE & 100% TAPPABLE "⚡ AUTO TEXT" button
+    // 2. Add DRAGGABLE "⚡ AUTO TEXT" button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
