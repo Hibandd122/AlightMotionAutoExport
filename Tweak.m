@@ -554,20 +554,20 @@ static BOOL isDragging = NO;
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        if (currentLineIndex == 0) {
+        NSInteger targetIdx = currentLineIndex;
+        currentLineIndex++;
+        updateButtonState();
+        
+        if (targetIdx == 0) {
             applyTextToInputDirectly(top, pendingTextLines[0]);
             showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng 1/%lu: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
-            currentLineIndex++;
-            updateButtonState();
         } else {
-            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer & Nạp dòng %ld/%lu...", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count]);
+            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer & Nạp dòng %ld/%lu...", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count]);
             ensureTimelineLayerSelected();
             triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                applyTextToInputDirectly(top, pendingTextLines[currentLineIndex]);
-                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count, pendingTextLines[currentLineIndex]]);
-                currentLineIndex++;
-                updateButtonState();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                applyTextToInputDirectly(top, pendingTextLines[targetIdx]);
+                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count, pendingTextLines[targetIdx]]);
             });
         }
     } else {
@@ -593,22 +593,6 @@ static BOOL isDragging = NO;
     }
 }
 @end
-
-// Hook UIApplication sendAction:to:from:forEvent: for UI tracing
-static BOOL (*orig_sendAction)(UIApplication *, SEL, SEL, id, id, UIEvent *);
-static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target, id sender, UIEvent *event) {
-    if (action) {
-        NSString *selName = NSStringFromSelector(action);
-        NSString *targetClass = target ? NSStringFromClass([target class]) : @"NilTarget";
-        
-        if (![selName containsString:@"handlePan"] && ![selName containsString:@"buttonTapped"]) {
-            NSString *logMsg = [NSString stringWithFormat:@"Target: %@ | Action: %@", targetClass, selName];
-            NSLog(@"[AlightMotion MOD TRACER] %@", logMsg);
-            showHUDLog(logMsg);
-        }
-    }
-    return orig_sendAction(self, _cmd, action, target, sender, event);
-}
 
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
@@ -671,10 +655,4 @@ __attribute__((constructor)) static void initHooks() {
     Method m = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     orig_viewDidAppear = (void *)method_getImplementation(m);
     method_setImplementation(m, (IMP)hook_viewDidAppear);
-    
-    // Hook UIApplication sendAction:to:from:forEvent: for live method tracing
-    Class appClass = objc_getClass("UIApplication");
-    Method mApp = class_getInstanceMethod(appClass, @selector(sendAction:to:from:forEvent:));
-    orig_sendAction = (void *)method_getImplementation(mApp);
-    method_setImplementation(mApp, (IMP)hook_sendAction);
 }
