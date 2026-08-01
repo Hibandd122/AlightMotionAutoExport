@@ -207,30 +207,19 @@ static BOOL triggerAutoSplitLayer() {
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
-    // Target EditingPanelVC directly!
-    UIViewController *panelVC = findViewControllerOfClass(topVC, @"EditingPanelVC");
-    if (!panelVC && winRoot) panelVC = findViewControllerOfClass(winRoot, @"EditingPanelVC");
+    // 1. Try searchSelectorInHierarchy on topVC directly
+    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplit:))) return YES;
+    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplitTimeline:))) return YES;
+    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplit))) return YES;
     
-    if (panelVC && [panelVC respondsToSelector:@selector(onTapSplit:)]) {
-        IMP imp = [panelVC methodForSelector:@selector(onTapSplit:)];
-        void (*func)(id, SEL, id) = (void *)imp;
-        func(panelVC, @selector(onTapSplit:), nil);
-        return YES;
+    // 2. Try searchSelectorInHierarchy on winRoot
+    if (winRoot && winRoot != topVC) {
+        if (searchSelectorInHierarchy(winRoot, @selector(onTapSplit:))) return YES;
+        if (searchSelectorInHierarchy(winRoot, @selector(onTapSplitTimeline:))) return YES;
     }
     
-    SEL selectors[] = {
-        @selector(onTapSplit:),
-        @selector(onTapSplitTimeline:),
-        @selector(onTapSplit)
-    };
-    
-    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
-        SEL s = selectors[i];
-        if (searchSelectorInHierarchy(topVC, s)) return YES;
-        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
-    }
-    
-    if (topVC.view && sendActionToButtonsInView(topVC.view, @"split")) return YES;
+    // 3. Fallback: Search all UIButtons in view hierarchy with split action
+    if (topVC && topVC.view && sendActionToButtonsInView(topVC.view, @"split")) return YES;
     if (winRoot && winRoot.view && sendActionToButtonsInView(winRoot.view, @"split")) return YES;
     
     return NO;
@@ -243,7 +232,6 @@ static BOOL jumpToNextMarkerOrKeyframe() {
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
-    // 1. Target PreviewControlBarVC directly!
     UIViewController *previewVC = findViewControllerOfClass(topVC, @"PreviewControlBarVC");
     if (!previewVC && winRoot) previewVC = findViewControllerOfClass(winRoot, @"PreviewControlBarVC");
     
@@ -254,7 +242,6 @@ static BOOL jumpToNextMarkerOrKeyframe() {
         return YES;
     }
     
-    // 2. Target TimelineViewController
     UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
     if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
     
@@ -337,37 +324,29 @@ static void processLineAtIndex(NSInteger index) {
     updateButtonState();
     
     if (index == 0) {
-        // Step 1: Nạp dòng 1 vào Layer ban đầu
         UIViewController *top = getTopViewController();
         applyTextToInputDirectly(top, pendingTextLines[0]);
         showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng 1/%lu: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
         
-        // Đợi 0.45s chuyển sang dòng 2
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             processLineAtIndex(index + 1);
         });
     } else {
-        // các dòng tiếp theo (Marker 2, Marker 3...):
-        // 1. Nhảy mốc Marker tiếp theo
         showHUDLog([NSString stringWithFormat:@"⏩ Nhảy mốc Marker dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
         jumpToNextMarkerOrKeyframe();
         
-        // 2. Đợi 0.30s ➔ Re-select Timeline Layer (đảm bảo Layer được chọn)
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             ensureTimelineLayerSelected();
             
-            // 3. Đợi 0.15s ➔ Gọi Cắt đôi Layer
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
                 triggerAutoSplitLayer();
                 
-                // 4. Đợi 0.35s ➔ Nạp câu chữ tương ứng vào Layer mới
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     UIViewController *top = getTopViewController();
                     applyTextToInputDirectly(top, pendingTextLines[index]);
                     showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
                     
-                    // 5. Đợi 0.45s ➔ Tiếp tục sang Marker tiếp theo
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                         processLineAtIndex(index + 1);
                     });
@@ -399,8 +378,6 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
         isProcessingAutoBatch = YES;
         processLineAtIndex(0);
     } else {
-        applyTextToInputDirectly(parentVC, pendingTextLines[0]);
-        currentLineIndex = 1;
         updateButtonState();
     }
 }
@@ -555,18 +532,24 @@ static CGPoint panStartPoint;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
         NSInteger targetIdx = currentLineIndex;
         currentLineIndex++;
-        updateButtonState();
         
         if (targetIdx == 0) {
+            // Step 1: Nạp dòng 1 vào Layer 1
             applyTextToInputDirectly(top, pendingTextLines[0]);
-            showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng 1/%lu: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
+            showHUDLog([NSString stringWithFormat:@"📝 [1/%lu] Nạp thành công: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
+            updateButtonState();
         } else {
-            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer & Nạp dòng %ld/%lu...", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count]);
+            // Step 2 & Step 3: Cắt Layer & Nạp dòng tương ứng
+            showHUDLog([NSString stringWithFormat:@"✂️ [%ld/%lu] Cắt Layer & Nạp...", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count]);
+            
             ensureTimelineLayerSelected();
             triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                applyTextToInputDirectly(top, pendingTextLines[targetIdx]);
-                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count, pendingTextLines[targetIdx]]);
+            
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIViewController *latestTop = getTopViewController();
+                applyTextToInputDirectly(latestTop, pendingTextLines[targetIdx]);
+                showHUDLog([NSString stringWithFormat:@"📝 [%ld/%lu] Nạp thành công: %@", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count, pendingTextLines[targetIdx]]);
+                updateButtonState();
             });
         }
     } else {
