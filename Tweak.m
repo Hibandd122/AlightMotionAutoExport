@@ -90,42 +90,57 @@ static BOOL sendActionToButtonsInView(UIView *view, NSString *selectorKeyword) {
     return NO;
 }
 
-static void triggerGlobalAction(SEL primarySel, SEL fallbackSel, NSString *keyword) {
+static void jumpToNextMarkerOrKeyframe() {
     UIViewController *topVC = getTopViewController();
     UIWindow *keyWin = nil;
     NSArray *wins = [UIApplication sharedApplication].windows;
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
-    BOOL done = sendSelectorToHierarchy(topVC, primarySel);
-    if (!done && fallbackSel) {
-        done = sendSelectorToHierarchy(topVC, fallbackSel);
-    }
-    if (!done && winRoot && winRoot != topVC) {
-        done = sendSelectorToHierarchy(winRoot, primarySel);
-        if (!done && fallbackSel) {
-            done = sendSelectorToHierarchy(winRoot, fallbackSel);
-        }
+    SEL selectors[] = {
+        @selector(seekToMarker),
+        @selector(onTapBookmark),
+        @selector(onTapNextKeyframe),
+        @selector(onTapMoveNext),
+        @selector(goNextKeyframe)
+    };
+    
+    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
+        SEL s = selectors[i];
+        if (sendSelectorToHierarchy(topVC, s)) return;
+        if (winRoot && winRoot != topVC && sendSelectorToHierarchy(winRoot, s)) return;
     }
     
-    if (!done && keyword) {
-        if (topVC.view) sendActionToButtonsInView(topVC.view, keyword);
-        if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, keyword);
-    }
-}
-
-static void jumpToNextKeyframe() {
-    triggerGlobalAction(@selector(onTapNextKeyframe), @selector(onTapBookmark), @"keyframe");
+    if (topVC.view) sendActionToButtonsInView(topVC.view, @"bookmark");
+    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"bookmark");
 }
 
 static void triggerAutoSplitLayer() {
-    triggerGlobalAction(@selector(onTapSplit), @selector(onTapSplitTimeline), @"split");
+    UIViewController *topVC = getTopViewController();
+    UIWindow *keyWin = nil;
+    NSArray *wins = [UIApplication sharedApplication].windows;
+    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
+    UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
+    
+    SEL selectors[] = {
+        @selector(onTapSplit),
+        @selector(onTapSplitTimeline)
+    };
+    
+    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
+        SEL s = selectors[i];
+        if (sendSelectorToHierarchy(topVC, s)) return;
+        if (winRoot && winRoot != topVC && sendSelectorToHierarchy(winRoot, s)) return;
+    }
+    
+    if (topVC.view) sendActionToButtonsInView(topVC.view, @"split");
+    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"split");
 }
 
 static void updateButtonState() {
     if (!globalAutoTextBtn) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSString *title = [NSString stringWithFormat:@"⚡ KEYFRAME (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        NSString *title = [NSString stringWithFormat:@"⚡ MARKER (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
         [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
         globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95];
     } else {
@@ -175,7 +190,7 @@ static void executeOneStep(UIViewController *topVC) {
     }
     
     if (currentLineIndex > 0) {
-        jumpToNextKeyframe();
+        jumpToNextMarkerOrKeyframe();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             triggerAutoSplitLayer();
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -241,7 +256,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Tự động Cắt Layer và Nạp chữ theo các mốc Keyframe trên Timeline:";
+    subLbl.text = @"Tự động Cắt Layer và Nạp chữ theo các mốc Bookmark/Marker màu đỏ trên Timeline:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -262,7 +277,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:textView];
     
     UIButton *btnAutoAll = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnAutoAll setTitle:@"⚡ TÁCH TOÀN BỘ KEYFRAME" forState:UIControlStateNormal];
+    [btnAutoAll setTitle:@"⚡ TÁCH THEO MỐC MARKER" forState:UIControlStateNormal];
     [btnAutoAll setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     btnAutoAll.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
     btnAutoAll.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
@@ -390,7 +405,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE AUTOMATIC KEYFRAME SPLIT "⚡ AUTO TEXT" button
+    // 2. Add DRAGGABLE AUTOMATIC MARKER SPLIT "⚡ AUTO TEXT" button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
