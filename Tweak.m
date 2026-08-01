@@ -49,10 +49,36 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
+static void triggerAutoSplitLayer(UIViewController *parentVC) {
+    if (!parentVC) return;
+    
+    NSMutableArray *targets = [NSMutableArray arrayWithObject:parentVC];
+    if (parentVC.childViewControllers.count > 0) {
+        [targets addObjectsFromArray:parentVC.childViewControllers];
+    }
+    if (parentVC.parentViewController) {
+        [targets addObject:parentVC.parentViewController];
+    }
+    
+    for (id target in targets) {
+        if ([target respondsToSelector:@selector(onTapSplit)]) {
+            IMP imp = [target methodForSelector:@selector(onTapSplit)];
+            void (*func)(id, SEL) = (void *)imp;
+            func(target, @selector(onTapSplit));
+            return;
+        } else if ([target respondsToSelector:@selector(onTapSplitTimeline)]) {
+            IMP imp = [target methodForSelector:@selector(onTapSplitTimeline)];
+            void (*func)(id, SEL) = (void *)imp;
+            func(target, @selector(onTapSplitTimeline));
+            return;
+        }
+    }
+}
+
 static void updateButtonState() {
     if (!globalAutoTextBtn) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSString *title = [NSString stringWithFormat:@"⚡ NEXT (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        NSString *title = [NSString stringWithFormat:@"⚡ CẮT & NEXT (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
         [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
         globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95]; // Yellow for NEXT mode
     } else {
@@ -137,7 +163,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để nạp từng dòng theo nhịp:";
+    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để vừa tự CẮT Layer vừa NẠP dòng chữ mới:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -240,7 +266,10 @@ static BOOL isDragging = NO;
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        // 1-Tap Mode: Inject NEXT line into current keyframe/position!
+        // 1. Auto-Cut/Split Layer at playhead position!
+        triggerAutoSplitLayer(top);
+        
+        // 2. Inject NEXT line into the split layer segment!
         applyCurrentLineToInput(top);
     } else {
         // Normal Mode: Open Modal Popup to paste multi-line text!
@@ -288,7 +317,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE 1-TAP SEQUENTIAL "⚡ AUTO TEXT" button
+    // 2. Add DRAGGABLE 1-TAP AUTO-CUT & SEQUENTIAL TEXT button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -296,7 +325,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             globalAutoTextBtn = autoTextBtn;
             
             [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
+            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11.0];
             autoTextBtn.layer.cornerRadius = 14.0;
             autoTextBtn.layer.shadowColor = [UIColor blackColor].CGColor;
             autoTextBtn.layer.shadowOffset = CGSizeMake(0, 2);
@@ -305,7 +334,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             autoTextBtn.userInteractionEnabled = YES;
             
             CGFloat screenWidth = self.view.bounds.size.width;
-            autoTextBtn.frame = CGRectMake(screenWidth - 115.0, 85.0, 100.0, 32.0);
+            autoTextBtn.frame = CGRectMake(screenWidth - 125.0, 85.0, 110.0, 32.0);
             
             updateButtonState();
             
