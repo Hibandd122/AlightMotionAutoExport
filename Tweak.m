@@ -14,7 +14,27 @@ static void sendCompletionNotification() {
     [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:nil];
 }
 
-static void presentAutoTextModal(UIViewController *parentVC) {
+static UIViewController *getTopViewController() {
+    UIViewController *top = nil;
+    NSArray *windows = [UIApplication sharedApplication].windows;
+    for (UIWindow *win in windows) {
+        if (win.isKeyWindow) {
+            top = win.rootViewController;
+            break;
+        }
+    }
+    if (!top && windows.count > 0) {
+        UIWindow *firstWin = (UIWindow *)windows.firstObject;
+        top = firstWin.rootViewController;
+    }
+    while (top.presentedViewController) {
+        top = top.presentedViewController;
+    }
+    return top;
+}
+
+static void presentAutoTextModal() {
+    UIViewController *parentVC = getTopViewController();
     if (!parentVC) return;
     
     UIViewController *modalVC = [[UIViewController alloc] init];
@@ -117,19 +137,48 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [parentVC presentViewController:modalVC animated:YES completion:nil];
 }
 
-// Pan Gesture to drag floating button anywhere on screen
-@interface AutoTextDragHandler : NSObject
+@interface AutoTextButtonHandler : NSObject
++ (instancetype)sharedInstance;
+- (void)buttonTapped:(UIButton *)sender;
+- (void)handlePan:(UIPanGestureRecognizer *)pan;
 @end
-@implementation AutoTextDragHandler
-+ (void)handlePan:(UIPanGestureRecognizer *)pan {
+
+@implementation AutoTextButtonHandler
+static CGPoint panStartPoint;
+static BOOL isDragging = NO;
+
++ (instancetype)sharedInstance {
+    static AutoTextButtonHandler *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[AutoTextButtonHandler alloc] init];
+    });
+    return instance;
+}
+
+- (void)buttonTapped:(UIButton *)sender {
+    presentAutoTextModal();
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
     UIView *btn = pan.view;
-    CGPoint translation = [pan translationInView:btn.superview];
-    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
-    [pan setTranslation:CGPointZero inView:btn.superview];
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        panStartPoint = btn.center;
+        isDragging = NO;
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        CGPoint translation = [pan translationInView:btn.superview];
+        if (hypot(translation.x, translation.y) > 4.0) {
+            isDragging = YES;
+        }
+        btn.center = CGPointMake(panStartPoint.x + translation.x, panStartPoint.y + translation.y);
+    } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        if (!isDragging) {
+            [self buttonTapped:(UIButton *)btn];
+        }
+    }
 }
 @end
 
-// Hook UIViewController viewDidAppear
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
@@ -151,7 +200,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE "⚡ AUTO TEXT" button placed away from original position
+    // 2. Add DRAGGABLE & 100% TAPPABLE "⚡ AUTO TEXT" button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -165,18 +214,17 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             autoTextBtn.layer.shadowOffset = CGSizeMake(0, 2);
             autoTextBtn.layer.shadowOpacity = 0.4;
             autoTextBtn.layer.shadowRadius = 4.0;
+            autoTextBtn.userInteractionEnabled = YES;
             
             CGFloat screenWidth = self.view.bounds.size.width;
             autoTextBtn.frame = CGRectMake(screenWidth - 115.0, 85.0, 100.0, 32.0);
             
-            // Add Pan Gesture so user can drag it ANYWHERE on screen
-            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextDragHandler class] action:@selector(handlePan:)];
-            [autoTextBtn addGestureRecognizer:pan];
+            [autoTextBtn addTarget:[AutoTextButtonHandler sharedInstance] action:@selector(buttonTapped:) forControlEvents:UIControlEventTouchUpInside];
             
-            __weak typeof(self) weakSelf = self;
-            [autoTextBtn addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-                presentAutoTextModal(weakSelf);
-            }] forControlEvents:UIControlEventTouchUpInside];
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextButtonHandler sharedInstance] action:@selector(handlePan:)];
+            pan.cancelsTouchesInView = NO;
+            pan.delaysTouchesBegan = NO;
+            [autoTextBtn addGestureRecognizer:pan];
             
             [self.view addSubview:autoTextBtn];
             [self.view bringSubviewToFront:autoTextBtn];
