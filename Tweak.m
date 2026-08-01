@@ -57,7 +57,7 @@ static void sendDiscordLog(NSString *msg) {
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:bodyDict options:0 error:&err];
     if (jsonData) {
         [req setHTTPBody:jsonData];
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:nil];
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {}];
         [task resume];
     }
 }
