@@ -2,8 +2,6 @@
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
-#define AUTO_TEXT_BUTTON_TAG 998877
-
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -115,13 +113,48 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [parentVC presentViewController:modalVC animated:YES completion:nil];
 }
 
+// Hook presentViewController to inject "⚡ Auto Text" into 3-dots ActionSheet Menu
+static void (*orig_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, id);
+static void hook_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vcToPresent, BOOL flag, id completion) {
+    if ([vcToPresent isKindOfClass:[UIAlertController class]]) {
+        UIAlertController *alert = (UIAlertController *)vcToPresent;
+        if (alert.preferredStyle == UIAlertControllerStyleActionSheet) {
+            BOOL isMoreMenu = NO;
+            for (UIAlertAction *action in alert.actions) {
+                NSString *title = action.title;
+                if ([title containsString:@"Element"] || [title containsString:@"Phần tử"] || [title containsString:@"Save"] || [title containsString:@"Lưu"] || [title containsString:@"Copy"] || [title containsString:@"Sao chép"]) {
+                    isMoreMenu = YES;
+                    break;
+                }
+            }
+            
+            if (isMoreMenu || alert.actions.count >= 2) {
+                BOOL alreadyAdded = NO;
+                for (UIAlertAction *act in alert.actions) {
+                    if ([act.title containsString:@"Auto Text"]) {
+                        alreadyAdded = YES;
+                        break;
+                    }
+                }
+                if (!alreadyAdded) {
+                    __weak typeof(self) weakSelf = self;
+                    UIAlertAction *autoTextAction = [UIAlertAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                        presentAutoTextModal(weakSelf);
+                    }];
+                    [alert addAction:autoTextAction];
+                }
+            }
+        }
+    }
+    orig_presentViewController(self, _cmd, vcToPresent, flag, completion);
+}
+
+// Hook UIViewController viewDidAppear for auto-save
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
     
     NSString *className = NSStringFromClass([self class]);
-    
-    // 1. Auto-save export completion (ExportPreviewVC)
     if ([className containsString:@"ExportPreviewVC"] || [className containsString:@"ExportVC"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([self respondsToSelector:@selector(storeButton)]) {
@@ -135,33 +168,18 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             }
         });
     }
-    
-    // 2. Add isolated "⚡ AUTO TEXT" button in Text Inspector VC
-    if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"]) {
-        if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
-            UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-            autoTextBtn.tag = AUTO_TEXT_BUTTON_TAG;
-            [autoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
-            [autoTextBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-            autoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
-            autoTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
-            autoTextBtn.layer.cornerRadius = 8.0;
-            autoTextBtn.frame = CGRectMake(self.view.bounds.size.width - 110, 10, 95, 30);
-            autoTextBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
-            
-            __weak typeof(self) weakSelf = self;
-            [autoTextBtn addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-                presentAutoTextModal(weakSelf);
-            }] forControlEvents:UIControlEventTouchUpInside];
-            
-            [self.view addSubview:autoTextBtn];
-        }
-    }
 }
 
 __attribute__((constructor)) static void initHooks() {
     Class vcClass = objc_getClass("UIViewController");
-    Method m = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
-    orig_viewDidAppear = (void *)method_getImplementation(m);
-    method_setImplementation(m, (IMP)hook_viewDidAppear);
+    
+    // 1. Hook viewDidAppear
+    Method m1 = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
+    orig_viewDidAppear = (void *)method_getImplementation(m1);
+    method_setImplementation(m1, (IMP)hook_viewDidAppear);
+    
+    // 2. Hook presentViewController to intercept 3-dots ActionSheet Menu
+    Method m2 = class_getInstanceMethod(vcClass, @selector(presentViewController:animated:completion:));
+    orig_presentViewController = (void *)method_getImplementation(m2);
+    method_setImplementation(m2, (IMP)hook_presentViewController);
 }
