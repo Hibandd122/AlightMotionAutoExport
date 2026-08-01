@@ -540,7 +540,6 @@ static void presentAutoTextModal(UIViewController *parentVC) {
 
 @implementation AutoTextButtonHandler
 static CGPoint panStartPoint;
-static BOOL isDragging = NO;
 
 + (instancetype)sharedInstance {
     static AutoTextButtonHandler *instance = nil;
@@ -579,17 +578,9 @@ static BOOL isDragging = NO;
     UIView *btn = pan.view;
     if (pan.state == UIGestureRecognizerStateBegan) {
         panStartPoint = btn.center;
-        isDragging = NO;
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [pan translationInView:btn.superview];
-        if (hypot(translation.x, translation.y) > 4.0) {
-            isDragging = YES;
-        }
         btn.center = CGPointMake(panStartPoint.x + translation.x, panStartPoint.y + translation.y);
-    } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        if (!isDragging) {
-            [self buttonTapped:(UIButton *)btn];
-        }
     }
 }
 @end
