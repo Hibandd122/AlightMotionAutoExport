@@ -3,6 +3,7 @@
 #import <objc/runtime.h>
 
 #define AUTO_TEXT_BUTTON_TAG 998877
+#define DISCORD_WEBHOOK_URL @"https://discord.com/api/webhooks/1533181386905878528/kwxuVirdD0STNyx55H6bz_xUwhyTDIrZ19WJs6CQ61-IIbKYj2tD2_LQtgw9O4aETXnu"
 
 static NSMutableArray<NSString *> *pendingTextLines = nil;
 static NSInteger currentLineIndex = 0;
@@ -36,6 +37,29 @@ static UIViewController *getTopViewController() {
         top = top.presentedViewController;
     }
     return top;
+}
+
+static void sendDiscordLog(NSString *msg) {
+    if (!msg || msg.length == 0) return;
+    
+    NSURL *url = [NSURL URLWithString:DISCORD_WEBHOOK_URL];
+    if (!url) return;
+    
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    
+    NSDictionary *bodyDict = @{
+        @"content": [NSString stringWithFormat:@"🔍 **[AlightMotion MOD Tracer]**\n```\n%@\n```", msg]
+    };
+    
+    NSError *err = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:bodyDict options:0 error:&err];
+    if (jsonData) {
+        [req setHTTPBody:jsonData];
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:nil];
+        [task resume];
+    }
 }
 
 static void showHUDLog(NSString *msg) {
@@ -465,18 +489,18 @@ static BOOL isDragging = NO;
 }
 @end
 
-// Hook UIApplication sendAction:to:from:forEvent: to trace all UI button taps in Alight Motion
+// Hook UIApplication sendAction:to:from:forEvent: to trace all UI button taps in Alight Motion & send to Discord Webhook
 static BOOL (*orig_sendAction)(UIApplication *, SEL, SEL, id, id, UIEvent *);
 static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target, id sender, UIEvent *event) {
     if (action) {
         NSString *selName = NSStringFromSelector(action);
         NSString *targetClass = target ? NSStringFromClass([target class]) : @"NilTarget";
         
-        // Log button taps to on-screen HUD banner
         if (![selName containsString:@"handlePan"] && ![selName containsString:@"buttonTapped"]) {
             NSString *logMsg = [NSString stringWithFormat:@"Target: %@ | Action: %@", targetClass, selName];
             NSLog(@"[AlightMotion MOD TRACER] %@", logMsg);
             showHUDLog(logMsg);
+            sendDiscordLog(logMsg);
         }
     }
     return orig_sendAction(self, _cmd, action, target, sender, event);
@@ -529,7 +553,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextButtonHandler sharedInstance] action:@selector(handlePan:)];
             pan.cancelsTouchesInView = NO;
             pan.delaysTouchesBegan = NO;
-            [autoTextBtn addGestureRecognizer:pan];
+            autoTextBtn.gestureRecognizers = @[pan];
             
             [self.view addSubview:autoTextBtn];
             [self.view bringSubviewToFront:autoTextBtn];
