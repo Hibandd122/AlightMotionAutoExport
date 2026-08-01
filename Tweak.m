@@ -348,7 +348,43 @@ static void applyTextToInputDirectly(UIViewController *parentVC, NSString *line)
     }
 }
 
+static void processPrecutTextAtIndex(NSInteger index) {
+    if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) {
+        pendingTextLines = nil;
+        currentLineIndex = 0;
+        isProcessingAutoBatch = NO;
+        updateButtonState();
+        showHUDLog(@"Da nap xong tat ca Text Layer!");
+        return;
+    }
+
+    currentLineIndex = index;
+    updateButtonState();
+
+    if (index > 0 && !selectNextTimelineLayer()) {
+        pendingTextLines = nil;
+        currentLineIndex = 0;
+        isProcessingAutoBatch = NO;
+        updateButtonState();
+        showHUDLog(@"Khong tim thay Text Layer tiep theo trong Timeline:");
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIViewController *top = getTopViewController();
+        applyTextToInputDirectly(top, pendingTextLines[index]);
+        showHUDLog([NSString stringWithFormat:@"Nap Text Layer %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            processPrecutTextAtIndex(index + 1);
+        });
+    });
+}
+
 static void processLineAtIndex(NSInteger index) {
+    processPrecutTextAtIndex(index);
+    return;
+
     if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) {
         pendingTextLines = nil;
         currentLineIndex = 0;
@@ -468,7 +504,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Tự động Cắt Layer và Nạp chữ theo các mốc Bookmark/Marker màu đỏ trên Timeline:";
+    subLbl.text = @"Nạp lần lượt nội dung vào các Text Layer đã được cắt sẵn trên Timeline:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -498,7 +534,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:btnTestSplit];
     
     UIButton *btnAutoAll = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnAutoAll setTitle:@"⚡ TÁCH THEO MARKER" forState:UIControlStateNormal];
+    [btnAutoAll setTitle:@"⚡ NẠP TEXT THEO LAYER" forState:UIControlStateNormal];
     [btnAutoAll setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     btnAutoAll.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
     btnAutoAll.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
