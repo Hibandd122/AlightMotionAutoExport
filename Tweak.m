@@ -50,23 +50,31 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
-static BOOL sendSelectorToHierarchy(UIViewController *vc, SEL sel) {
+static BOOL callSelectorOnTarget(id target, SEL sel) {
+    if (!target) return NO;
+    if ([target respondsToSelector:sel]) {
+        IMP imp = [target methodForSelector:sel];
+        Method m = class_getInstanceMethod([target class], sel);
+        int args = m ? method_getNumberOfArguments(m) : 2;
+        if (args > 2) {
+            void (*func)(id, SEL, id) = (void *)imp;
+            func(target, sel, nil);
+        } else {
+            void (*func)(id, SEL) = (void *)imp;
+            func(target, sel);
+        }
+        return YES;
+    }
+    return NO;
+}
+
+static BOOL searchSelectorInHierarchy(UIViewController *vc, SEL sel) {
     if (!vc) return NO;
-    if ([vc respondsToSelector:sel]) {
-        IMP imp = [vc methodForSelector:sel];
-        void (*func)(id, SEL) = (void *)imp;
-        func(vc, sel);
-        return YES;
-    }
+    if (callSelectorOnTarget(vc, sel)) return YES;
     for (UIViewController *child in vc.childViewControllers) {
-        if (sendSelectorToHierarchy(child, sel)) return YES;
+        if (searchSelectorInHierarchy(child, sel)) return YES;
     }
-    if (vc.parentViewController && [vc.parentViewController respondsToSelector:sel]) {
-        IMP imp = [vc.parentViewController methodForSelector:sel];
-        void (*func)(id, SEL) = (void *)imp;
-        func(vc.parentViewController, sel);
-        return YES;
-    }
+    if (vc.parentViewController && callSelectorOnTarget(vc.parentViewController, sel)) return YES;
     return NO;
 }
 
@@ -90,6 +98,47 @@ static BOOL sendActionToButtonsInView(UIView *view, NSString *selectorKeyword) {
     return NO;
 }
 
+static BOOL triggerAutoSplitLayer() {
+    UIViewController *topVC = getTopViewController();
+    UIWindow *keyWin = nil;
+    NSArray *wins = [UIApplication sharedApplication].windows;
+    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
+    UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
+    
+    SEL selectors[] = {
+        @selector(onTapSplit:),
+        @selector(onTapSplitTimeline:),
+        @selector(onTapSplit),
+        @selector(onTapSplitTimeline)
+    };
+    
+    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
+        SEL s = selectors[i];
+        if (searchSelectorInHierarchy(topVC, s)) return YES;
+        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
+    }
+    
+    if (topVC && [topVC respondsToSelector:@selector(splitButton)]) {
+        UIButton *btn = [topVC performSelector:@selector(splitButton)];
+        if (btn && [btn isKindOfClass:[UIButton class]]) {
+            [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+            return YES;
+        }
+    }
+    if (winRoot && [winRoot respondsToSelector:@selector(splitButton)]) {
+        UIButton *btn = [winRoot performSelector:@selector(splitButton)];
+        if (btn && [btn isKindOfClass:[UIButton class]]) {
+            [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+            return YES;
+        }
+    }
+    
+    if (topVC.view && sendActionToButtonsInView(topVC.view, @"split")) return YES;
+    if (winRoot && winRoot.view && sendActionToButtonsInView(winRoot.view, @"split")) return YES;
+    
+    return NO;
+}
+
 static void jumpToNextMarkerOrKeyframe() {
     UIViewController *topVC = getTopViewController();
     UIWindow *keyWin = nil;
@@ -98,43 +147,21 @@ static void jumpToNextMarkerOrKeyframe() {
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
     SEL selectors[] = {
-        @selector(seekToMarker),
-        @selector(onTapBookmark),
+        @selector(onTapNextKeyframe:),
+        @selector(onTapBookmark:),
         @selector(onTapNextKeyframe),
-        @selector(onTapMoveNext),
-        @selector(goNextKeyframe)
+        @selector(onTapBookmark),
+        @selector(seekToMarker)
     };
     
     for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
         SEL s = selectors[i];
-        if (sendSelectorToHierarchy(topVC, s)) return;
-        if (winRoot && winRoot != topVC && sendSelectorToHierarchy(winRoot, s)) return;
+        if (searchSelectorInHierarchy(topVC, s)) return;
+        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return;
     }
     
     if (topVC.view) sendActionToButtonsInView(topVC.view, @"bookmark");
     if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"bookmark");
-}
-
-static void triggerAutoSplitLayer() {
-    UIViewController *topVC = getTopViewController();
-    UIWindow *keyWin = nil;
-    NSArray *wins = [UIApplication sharedApplication].windows;
-    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
-    UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
-    
-    SEL selectors[] = {
-        @selector(onTapSplit),
-        @selector(onTapSplitTimeline)
-    };
-    
-    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
-        SEL s = selectors[i];
-        if (sendSelectorToHierarchy(topVC, s)) return;
-        if (winRoot && winRoot != topVC && sendSelectorToHierarchy(winRoot, s)) return;
-    }
-    
-    if (topVC.view) sendActionToButtonsInView(topVC.view, @"split");
-    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"split");
 }
 
 static void updateButtonState() {
@@ -191,9 +218,9 @@ static void executeOneStep(UIViewController *topVC) {
     
     if (currentLineIndex > 0) {
         jumpToNextMarkerOrKeyframe();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 applyCurrentLineToInput(topVC);
             });
         });
@@ -222,7 +249,7 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     
     if (autoBatch) {
         if (batchAutoSplitTimer) [batchAutoSplitTimer invalidate];
-        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 repeats:YES block:^(NSTimer * _Nonnull t) {
+        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.40 repeats:YES block:^(NSTimer * _Nonnull t) {
             UIViewController *top = getTopViewController();
             executeOneStep(top);
         }];
@@ -276,11 +303,20 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     textView.text = @"Text 1\nText 2\nText 3";
     [card addSubview:textView];
     
+    UIButton *btnTestSplit = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btnTestSplit setTitle:@"✂️ TÁCH LAYER NGAY" forState:UIControlStateNormal];
+    [btnTestSplit setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    btnTestSplit.backgroundColor = [UIColor colorWithRed:0.90 green:0.20 blue:0.20 alpha:1.0];
+    btnTestSplit.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
+    btnTestSplit.layer.cornerRadius = 10.0;
+    btnTestSplit.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:btnTestSplit];
+    
     UIButton *btnAutoAll = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnAutoAll setTitle:@"⚡ TÁCH THEO MỐC MARKER" forState:UIControlStateNormal];
+    [btnAutoAll setTitle:@"⚡ TÁCH THEO MARKER" forState:UIControlStateNormal];
     [btnAutoAll setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     btnAutoAll.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
-    btnAutoAll.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+    btnAutoAll.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
     btnAutoAll.layer.cornerRadius = 10.0;
     btnAutoAll.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:btnAutoAll];
@@ -289,7 +325,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [btnCancel setTitle:@"HỦY" forState:UIControlStateNormal];
     [btnCancel setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
     btnCancel.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
-    btnCancel.titleLabel.font = [UIFont systemFontOfSize:14.0];
+    btnCancel.titleLabel.font = [UIFont systemFontOfSize:13.0];
     btnCancel.layer.cornerRadius = 10.0;
     btnCancel.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:btnCancel];
@@ -297,8 +333,8 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [NSLayoutConstraint activateConstraints:@[
         [card.centerXAnchor constraintEqualToAnchor:modalVC.view.centerXAnchor],
         [card.centerYAnchor constraintEqualToAnchor:modalVC.view.centerYAnchor constant:-30],
-        [card.widthAnchor constraintEqualToConstant:320],
-        [card.heightAnchor constraintEqualToConstant:310],
+        [card.widthAnchor constraintEqualToConstant:330],
+        [card.heightAnchor constraintEqualToConstant:320],
         
         [titleLbl.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
         [titleLbl.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
@@ -311,21 +347,33 @@ static void presentAutoTextModal(UIViewController *parentVC) {
         [textView.topAnchor constraintEqualToAnchor:subLbl.bottomAnchor constant:12],
         [textView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
         [textView.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [textView.heightAnchor constraintEqualToConstant:120],
+        [textView.heightAnchor constraintEqualToConstant:110],
+        
+        [btnTestSplit.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+        [btnTestSplit.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12],
+        [btnTestSplit.widthAnchor constraintEqualToConstant:130],
+        [btnTestSplit.heightAnchor constraintEqualToConstant:40],
         
         [btnAutoAll.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
-        [btnAutoAll.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [btnAutoAll.widthAnchor constraintEqualToConstant:200],
+        [btnAutoAll.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
+        [btnAutoAll.widthAnchor constraintEqualToConstant:160],
         [btnAutoAll.heightAnchor constraintEqualToConstant:40],
         
-        [btnCancel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
-        [btnCancel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [btnCancel.trailingAnchor constraintEqualToAnchor:btnAutoAll.leadingAnchor constant:-10],
-        [btnCancel.heightAnchor constraintEqualToConstant:40]
+        [btnCancel.topAnchor constraintEqualToAnchor:card.topAnchor constant:12],
+        [btnCancel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
+        [btnCancel.widthAnchor constraintEqualToConstant:50],
+        [btnCancel.heightAnchor constraintEqualToConstant:30]
     ]];
     
     [btnCancel addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         [modalVC dismissViewControllerAnimated:YES completion:nil];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    
+    [btnTestSplit addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        BOOL ok = triggerAutoSplitLayer();
+        if (ok) {
+            sendCompletionNotification();
+        }
     }] forControlEvents:UIControlEventTouchUpInside];
     
     [btnAutoAll addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
