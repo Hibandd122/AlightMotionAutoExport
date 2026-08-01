@@ -127,8 +127,18 @@ static UIMenu *hook_menuWithTitle_children(Class self, SEL _cmd, NSString *title
     }
     
     if (!alreadyAdded && children.count > 0) {
-        UIAction *autoTextAction = [UIAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" image:[UIImage systemImageName:@"wand.and.stars"] identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
-            UIViewController *topVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        UIAction *autoTextAction = [UIAction actionWithTitle:@"⚡ Auto Text (Tách Keyframe)" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            UIViewController *topVC = nil;
+            NSArray *windows = [UIApplication sharedApplication].windows;
+            for (UIWindow *win in windows) {
+                if (win.isKeyWindow) {
+                    topVC = win.rootViewController;
+                    break;
+                }
+            }
+            if (!topVC) {
+                topVC = windows.firstObject.rootViewController;
+            }
             while (topVC.presentedViewController) {
                 topVC = topVC.presentedViewController;
             }
