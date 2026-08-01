@@ -587,7 +587,7 @@ static BOOL isDragging = NO;
         } else {
             showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer & Nạp dòng %ld/%lu...", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count]);
             ensureTimelineLayerSelected();
-            BOOL splitOk = triggerAutoSplitLayer();
+            triggerAutoSplitLayer();
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 applyTextToInputDirectly(top, pendingTextLines[currentLineIndex]);
                 showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count, pendingTextLines[currentLineIndex]]);
