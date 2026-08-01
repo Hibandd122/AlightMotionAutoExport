@@ -58,6 +58,7 @@ static UIViewController *findViewControllerOfClass(UIViewController *root, NSStr
     return nil;
 }
 
+// Discord Webhook function (preserved for future use)
 static void sendDiscordLog(NSString *msg) {
     if (!msg || msg.length == 0) return;
     
@@ -124,6 +125,56 @@ static UIView *findTargetInputView(UIView *view) {
         if (res) return res;
     }
     return nil;
+}
+
+static void selectFirstTimelineCell(UIView *view) {
+    if (!view) return;
+    if ([view isKindOfClass:[UICollectionView class]]) {
+        UICollectionView *cv = (UICollectionView *)view;
+        NSInteger sections = [cv numberOfSections];
+        for (NSInteger s = 0; s < sections; s++) {
+            if ([cv numberOfItemsInSection:s] > 0) {
+                NSIndexPath *ip = [NSIndexPath indexPathForItem:0 inSection:s];
+                [cv selectItemAtIndexPath:ip animated:NO scrollPosition:UICollectionViewScrollPositionNone];
+                if ([cv.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
+                    [cv.delegate collectionView:cv didSelectItemAtIndexPath:ip];
+                }
+                return;
+            }
+        }
+    } else if ([view isKindOfClass:[UITableView class]]) {
+        UITableView *tv = (UITableView *)view;
+        NSInteger sections = [tv numberOfSections];
+        for (NSInteger s = 0; s < sections; s++) {
+            if ([tv numberOfRowsInSection:s] > 0) {
+                NSIndexPath *ip = [NSIndexPath indexPathForRow:0 inSection:s];
+                [tv selectRowAtIndexPath:ip animated:NO scrollPosition:UITableViewScrollPositionNone];
+                if ([tv.delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)]) {
+                    [tv.delegate tableView:tv didSelectRowAtIndexPath:ip];
+                }
+                return;
+            }
+        }
+    }
+    for (UIView *sub in view.subviews) {
+        selectFirstTimelineCell(sub);
+    }
+}
+
+static void ensureTimelineLayerSelected() {
+    UIViewController *topVC = getTopViewController();
+    UIWindow *keyWin = nil;
+    NSArray *wins = [UIApplication sharedApplication].windows;
+    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
+    
+    UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
+    if (!timelineVC && keyWin) timelineVC = findViewControllerOfClass(keyWin.rootViewController, @"TimelineViewController");
+    
+    if (timelineVC && timelineVC.view) {
+        selectFirstTimelineCell(timelineVC.view);
+    } else if (topVC && topVC.view) {
+        selectFirstTimelineCell(topVC.view);
+    }
 }
 
 static BOOL callSelectorOnTarget(id target, SEL sel) {
@@ -321,25 +372,30 @@ static void processLineAtIndex(NSInteger index) {
             processLineAtIndex(index + 1);
         });
     } else {
-        // các dòng tiếp theo:
+        // các dòng tiếp theo (Marker 2, Marker 3...):
         // 1. Nhảy mốc Marker tiếp theo
         showHUDLog([NSString stringWithFormat:@"⏩ Nhảy mốc Marker dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
         jumpToNextMarkerOrKeyframe();
         
-        // 2. Đợi 0.35s để con trỏ Timeline nhảy cố định ➔ Gọi Cắt đôi Layer
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
-            triggerAutoSplitLayer();
+        // 2. Đợi 0.30s ➔ Re-select Timeline Layer (đảm bảo Layer được chọn)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            ensureTimelineLayerSelected();
             
-            // 3. Đợi 0.35s để Alight Motion cập nhật Layer mới ➔ Nạp câu chữ tương ứng
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIViewController *top = getTopViewController();
-                applyTextToInputDirectly(top, pendingTextLines[index]);
-                showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
+            // 3. Đợi 0.15s ➔ Gọi Cắt đôi Layer
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
+                triggerAutoSplitLayer();
                 
-                // 4. Đợi 0.45s tiếp tục sang dòng tiếp theo
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    processLineAtIndex(index + 1);
+                // 4. Đợi 0.35s ➔ Nạp câu chữ tương ứng vào Layer mới
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    UIViewController *top = getTopViewController();
+                    applyTextToInputDirectly(top, pendingTextLines[index]);
+                    showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
+                    
+                    // 5. Đợi 0.45s ➔ Tiếp tục sang Marker tiếp theo
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        processLineAtIndex(index + 1);
+                    });
                 });
             });
         });
@@ -548,7 +604,7 @@ static BOOL isDragging = NO;
 }
 @end
 
-// Hook UIApplication sendAction:to:from:forEvent: to trace all UI button taps in Alight Motion & send to Discord Webhook
+// Hook UIApplication sendAction:to:from:forEvent: for UI tracing (Discord Webhook temporarily paused)
 static BOOL (*orig_sendAction)(UIApplication *, SEL, SEL, id, id, UIEvent *);
 static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target, id sender, UIEvent *event) {
     if (action) {
@@ -559,7 +615,7 @@ static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target
             NSString *logMsg = [NSString stringWithFormat:@"Target: %@ | Action: %@", targetClass, selName];
             NSLog(@"[AlightMotion MOD TRACER] %@", logMsg);
             showHUDLog(logMsg);
-            sendDiscordLog(logMsg);
+            // sendDiscordLog(logMsg); // Temporarily paused per user request
         }
     }
     return orig_sendAction(self, _cmd, action, target, sender, event);
