@@ -38,6 +38,39 @@ static UIViewController *getTopViewController() {
     return top;
 }
 
+static void showHUDLog(NSString *msg) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *topVC = getTopViewController();
+        if (!topVC) return;
+        
+        UILabel *hud = [topVC.view viewWithTag:997766];
+        if (!hud) {
+            hud = [[UILabel alloc] init];
+            hud.tag = 997766;
+            hud.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.08 alpha:0.92];
+            hud.textColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
+            hud.font = [UIFont boldSystemFontOfSize:11.0];
+            hud.numberOfLines = 0;
+            hud.textAlignment = NSTextAlignmentCenter;
+            hud.layer.cornerRadius = 10.0;
+            hud.layer.masksToBounds = YES;
+            hud.layer.borderWidth = 1.0;
+            hud.layer.borderColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.5].CGColor;
+            
+            CGFloat w = topVC.view.bounds.size.width - 40.0;
+            hud.frame = CGRectMake(20.0, topVC.view.bounds.size.height - 110.0, w, 44.0);
+            hud.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
+            [topVC.view addSubview:hud];
+        }
+        
+        hud.text = [NSString stringWithFormat:@"🔍 RE TRACE:\n%@", msg];
+        [topVC.view bringSubviewToFront:hud];
+        
+        [NSObject cancelPreviousPerformRequestsWithTarget:hud selector:@selector(removeFromSuperview) object:nil];
+        [hud performSelector:@selector(removeFromSuperview) withObject:nil afterDelay:3.5];
+    });
+}
+
 static UIView *findTargetInputView(UIView *view) {
     if (!view) return nil;
     if (([view isKindOfClass:[UITextView class]] || [view isKindOfClass:[UITextField class]]) && view.tag != 8899) {
@@ -432,6 +465,23 @@ static BOOL isDragging = NO;
 }
 @end
 
+// Hook UIApplication sendAction:to:from:forEvent: to trace all UI button taps in Alight Motion
+static BOOL (*orig_sendAction)(UIApplication *, SEL, SEL, id, id, UIEvent *);
+static BOOL hook_sendAction(UIApplication *self, SEL _cmd, SEL action, id target, id sender, UIEvent *event) {
+    if (action) {
+        NSString *selName = NSStringFromSelector(action);
+        NSString *targetClass = target ? NSStringFromClass([target class]) : @"NilTarget";
+        
+        // Log button taps to on-screen HUD banner
+        if (![selName containsString:@"handlePan"] && ![selName containsString:@"buttonTapped"]) {
+            NSString *logMsg = [NSString stringWithFormat:@"Target: %@ | Action: %@", targetClass, selName];
+            NSLog(@"[AlightMotion MOD TRACER] %@", logMsg);
+            showHUDLog(logMsg);
+        }
+    }
+    return orig_sendAction(self, _cmd, action, target, sender, event);
+}
+
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     orig_viewDidAppear(self, _cmd, animated);
@@ -488,8 +538,15 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
 }
 
 __attribute__((constructor)) static void initHooks() {
+    // Hook UIViewController viewDidAppear
     Class vcClass = objc_getClass("UIViewController");
     Method m = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     orig_viewDidAppear = (void *)method_getImplementation(m);
     method_setImplementation(m, (IMP)hook_viewDidAppear);
+    
+    // Hook UIApplication sendAction:to:from:forEvent: for live method tracing
+    Class appClass = objc_getClass("UIApplication");
+    Method mApp = class_getInstanceMethod(appClass, @selector(sendAction:to:from:forEvent:));
+    orig_sendAction = (void *)method_getImplementation(mApp);
+    method_setImplementation(mApp, (IMP)hook_sendAction);
 }
