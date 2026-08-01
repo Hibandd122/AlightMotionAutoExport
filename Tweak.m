@@ -136,8 +136,9 @@ static UIMenu *hook_menuWithTitle_children(Class self, SEL _cmd, NSString *title
                     break;
                 }
             }
-            if (!topVC) {
-                topVC = windows.firstObject.rootViewController;
+            if (!topVC && windows.count > 0) {
+                UIWindow *firstWin = (UIWindow *)windows.firstObject;
+                topVC = firstWin.rootViewController;
             }
             while (topVC.presentedViewController) {
                 topVC = topVC.presentedViewController;
