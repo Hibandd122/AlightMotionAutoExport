@@ -217,7 +217,18 @@ static BOOL jumpToNextMarkerOrKeyframe() {
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
-    // Target TimelineViewController directly!
+    // 1. Target PreviewControlBarVC directly!
+    UIViewController *previewVC = findViewControllerOfClass(topVC, @"PreviewControlBarVC");
+    if (!previewVC && winRoot) previewVC = findViewControllerOfClass(winRoot, @"PreviewControlBarVC");
+    
+    if (previewVC && [previewVC respondsToSelector:@selector(onTapMoveNext:)]) {
+        IMP imp = [previewVC methodForSelector:@selector(onTapMoveNext:)];
+        void (*func)(id, SEL, id) = (void *)imp;
+        func(previewVC, @selector(onTapMoveNext:), nil);
+        return YES;
+    }
+    
+    // 2. Target TimelineViewController
     UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
     if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
     
@@ -229,6 +240,7 @@ static BOOL jumpToNextMarkerOrKeyframe() {
     }
     
     SEL selectors[] = {
+        @selector(onTapMoveNext:),
         @selector(onTapTimeLabel:),
         @selector(seekToMarker),
         @selector(onTapBookmark:),
@@ -241,8 +253,8 @@ static BOOL jumpToNextMarkerOrKeyframe() {
         if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
     }
     
-    if (topVC.view) sendActionToButtonsInView(topVC.view, @"bookmark");
-    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"bookmark");
+    if (topVC.view) sendActionToButtonsInView(topVC.view, @"movenext");
+    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"movenext");
     return NO;
 }
 
@@ -300,9 +312,9 @@ static void executeOneStep(UIViewController *topVC) {
     
     if (currentLineIndex > 0) {
         jumpToNextMarkerOrKeyframe();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             triggerAutoSplitLayer();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 applyCurrentLineToInput(topVC);
             });
         });
