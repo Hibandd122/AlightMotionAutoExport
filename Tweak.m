@@ -7,6 +7,7 @@
 static NSMutableArray<NSString *> *pendingTextLines = nil;
 static NSInteger currentLineIndex = 0;
 static UIButton *globalAutoTextBtn = nil;
+static NSTimer *batchAutoSplitTimer = nil;
 
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
@@ -49,6 +50,32 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
+static void jumpToNextKeyframe(UIViewController *parentVC) {
+    if (!parentVC) return;
+    
+    NSMutableArray *targets = [NSMutableArray arrayWithObject:parentVC];
+    if (parentVC.childViewControllers.count > 0) {
+        [targets addObjectsFromArray:parentVC.childViewControllers];
+    }
+    if (parentVC.parentViewController) {
+        [targets addObject:parentVC.parentViewController];
+    }
+    
+    for (id target in targets) {
+        if ([target respondsToSelector:@selector(onTapNextKeyframe)]) {
+            IMP imp = [target methodForSelector:@selector(onTapNextKeyframe)];
+            void (*func)(id, SEL) = (void *)imp;
+            func(target, @selector(onTapNextKeyframe));
+            return;
+        } else if ([target respondsToSelector:@selector(goNextKeyframe)]) {
+            IMP imp = [target methodForSelector:@selector(goNextKeyframe)];
+            void (*func)(id, SEL) = (void *)imp;
+            func(target, @selector(goNextKeyframe));
+            return;
+        }
+    }
+}
+
 static void triggerAutoSplitLayer(UIViewController *parentVC) {
     if (!parentVC) return;
     
@@ -78,12 +105,12 @@ static void triggerAutoSplitLayer(UIViewController *parentVC) {
 static void updateButtonState() {
     if (!globalAutoTextBtn) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSString *title = [NSString stringWithFormat:@"⚡ CẮT & NEXT (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
+        NSString *title = [NSString stringWithFormat:@"⚡ KEYFRAME (%ld/%lu)", (long)(currentLineIndex + 1), (unsigned long)pendingTextLines.count];
         [globalAutoTextBtn setTitle:title forState:UIControlStateNormal];
-        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95]; // Yellow for NEXT mode
+        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:0.95];
     } else {
         [globalAutoTextBtn setTitle:@"⚡ AUTO TEXT" forState:UIControlStateNormal];
-        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95]; // Neon Green for Normal mode
+        globalAutoTextBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:0.95];
     }
 }
 
@@ -118,7 +145,23 @@ static void applyCurrentLineToInput(UIViewController *parentVC) {
     updateButtonState();
 }
 
-static void startSequentialTextProcess(UIViewController *parentVC, NSString *rawText) {
+static void executeOneStep(UIViewController *topVC) {
+    if (!pendingTextLines || currentLineIndex >= pendingTextLines.count) {
+        if (batchAutoSplitTimer) {
+            [batchAutoSplitTimer invalidate];
+            batchAutoSplitTimer = nil;
+        }
+        return;
+    }
+    
+    if (currentLineIndex > 0) {
+        jumpToNextKeyframe(topVC);
+        triggerAutoSplitLayer(topVC);
+    }
+    applyCurrentLineToInput(topVC);
+}
+
+static void startSequentialTextProcess(UIViewController *parentVC, NSString *rawText, BOOL autoBatch) {
     if (rawText.length == 0) return;
     
     NSArray<NSString *> *lines = [rawText componentsSeparatedByString:@"\n"];
@@ -131,10 +174,19 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     }
     currentLineIndex = 0;
     
-    if (pendingTextLines.count > 0) {
-        applyCurrentLineToInput(parentVC);
-    } else {
+    if (pendingTextLines.count == 0) {
         updateButtonState();
+        return;
+    }
+    
+    if (autoBatch) {
+        if (batchAutoSplitTimer) [batchAutoSplitTimer invalidate];
+        batchAutoSplitTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer * _Nonnull t) {
+            UIViewController *top = getTopViewController();
+            executeOneStep(top);
+        }];
+    } else {
+        applyCurrentLineToInput(parentVC);
     }
 }
 
@@ -163,7 +215,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     [card addSubview:titleLbl];
     
     UILabel *subLbl = [[UILabel alloc] init];
-    subLbl.text = @"Dán văn bản nhiều dòng bên dưới để vừa tự CẮT Layer vừa NẠP dòng chữ mới:";
+    subLbl.text = @"Tự động Cắt Layer và Nạp chữ theo các mốc Keyframe trên Timeline:";
     subLbl.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     subLbl.font = [UIFont systemFontOfSize:13.0];
     subLbl.numberOfLines = 0;
@@ -183,14 +235,14 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     textView.text = @"Text 1\nText 2\nText 3";
     [card addSubview:textView];
     
-    UIButton *btnProcess = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btnProcess setTitle:@"TÁCH & NẠP DÒNG 1" forState:UIControlStateNormal];
-    [btnProcess setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    btnProcess.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
-    btnProcess.titleLabel.font = [UIFont boldSystemFontOfSize:14.0];
-    btnProcess.layer.cornerRadius = 10.0;
-    btnProcess.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:btnProcess];
+    UIButton *btnAutoAll = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btnAutoAll setTitle:@"⚡ TÁCH TOÀN BỘ KEYFRAME" forState:UIControlStateNormal];
+    [btnAutoAll setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    btnAutoAll.backgroundColor = [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0];
+    btnAutoAll.titleLabel.font = [UIFont boldSystemFontOfSize:13.0];
+    btnAutoAll.layer.cornerRadius = 10.0;
+    btnAutoAll.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:btnAutoAll];
     
     UIButton *btnCancel = [UIButton buttonWithType:UIButtonTypeCustom];
     [btnCancel setTitle:@"HỦY" forState:UIControlStateNormal];
@@ -220,14 +272,14 @@ static void presentAutoTextModal(UIViewController *parentVC) {
         [textView.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
         [textView.heightAnchor constraintEqualToConstant:120],
         
-        [btnProcess.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
-        [btnProcess.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [btnProcess.widthAnchor constraintEqualToConstant:160],
-        [btnProcess.heightAnchor constraintEqualToConstant:40],
+        [btnAutoAll.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+        [btnAutoAll.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        [btnAutoAll.widthAnchor constraintEqualToConstant:200],
+        [btnAutoAll.heightAnchor constraintEqualToConstant:40],
         
         [btnCancel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
         [btnCancel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [btnCancel.trailingAnchor constraintEqualToAnchor:btnProcess.leadingAnchor constant:-10],
+        [btnCancel.trailingAnchor constraintEqualToAnchor:btnAutoAll.leadingAnchor constant:-10],
         [btnCancel.heightAnchor constraintEqualToConstant:40]
     ]];
     
@@ -235,9 +287,9 @@ static void presentAutoTextModal(UIViewController *parentVC) {
         [modalVC dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     
-    [btnProcess addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+    [btnAutoAll addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         NSString *raw = textView.text;
-        startSequentialTextProcess(parentVC, raw);
+        startSequentialTextProcess(parentVC, raw, YES);
         [modalVC dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     
@@ -266,13 +318,8 @@ static BOOL isDragging = NO;
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        // 1. Auto-Cut/Split Layer at playhead position!
-        triggerAutoSplitLayer(top);
-        
-        // 2. Inject NEXT line into the split layer segment!
-        applyCurrentLineToInput(top);
+        executeOneStep(top);
     } else {
-        // Normal Mode: Open Modal Popup to paste multi-line text!
         presentAutoTextModal(top);
     }
 }
@@ -317,7 +364,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
         });
     }
     
-    // 2. Add DRAGGABLE 1-TAP AUTO-CUT & SEQUENTIAL TEXT button
+    // 2. Add DRAGGABLE AUTOMATIC KEYFRAME SPLIT "⚡ AUTO TEXT" button
     if ([className containsString:@"EditTextInspectorVC"] || [className containsString:@"EditTextPanelVC"] || [className containsString:@"MainEditor"] || [className containsString:@"ProjectEditor"]) {
         if (![self.view viewWithTag:AUTO_TEXT_BUTTON_TAG]) {
             UIButton *autoTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -334,7 +381,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             autoTextBtn.userInteractionEnabled = YES;
             
             CGFloat screenWidth = self.view.bounds.size.width;
-            autoTextBtn.frame = CGRectMake(screenWidth - 125.0, 85.0, 110.0, 32.0);
+            autoTextBtn.frame = CGRectMake(screenWidth - 115.0, 85.0, 100.0, 32.0);
             
             updateButtonState();
             
