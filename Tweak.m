@@ -92,7 +92,9 @@ static BOOL sendActionToButtonsInView(UIView *view, NSString *selectorKeyword) {
 
 static void triggerGlobalAction(SEL primarySel, SEL fallbackSel, NSString *keyword) {
     UIViewController *topVC = getTopViewController();
-    UIWindow *keyWin = [UIApplication sharedApplication].keyWindow;
+    UIWindow *keyWin = nil;
+    NSArray *wins = [UIApplication sharedApplication].windows;
+    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
     
     BOOL done = sendSelectorToHierarchy(topVC, primarySel);
