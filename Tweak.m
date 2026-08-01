@@ -92,8 +92,12 @@ static void showHUDLog(NSString *msg) {
 
 static UIView *findTargetInputView(UIView *view) {
     if (!view) return nil;
-    if (([view isKindOfClass:[UITextView class]] || [view isKindOfClass:[UITextField class]]) && view.tag != 8899) {
-        return view;
+    if (([view isKindOfClass:[UITextView class]] || [view isKindOfClass:[UITextField class]]) &&
+        view.tag != 8899 && !view.hidden && view.alpha > 0.01 && view.userInteractionEnabled) {
+        BOOL usable = [view isKindOfClass:[UITextView class]]
+            ? [(UITextView *)view isEditable]
+            : [(UITextField *)view isEnabled];
+        if (usable) return view;
     }
     for (UIView *sub in view.subviews) {
         UIView *res = findTargetInputView(sub);
@@ -102,54 +106,25 @@ static UIView *findTargetInputView(UIView *view) {
     return nil;
 }
 
-static void selectFirstTimelineCell(UIView *view) {
-    if (!view) return;
-    if ([view isKindOfClass:[UICollectionView class]]) {
-        UICollectionView *cv = (UICollectionView *)view;
-        NSInteger sections = [cv numberOfSections];
-        for (NSInteger s = 0; s < sections; s++) {
-            if ([cv numberOfItemsInSection:s] > 0) {
-                NSIndexPath *ip = [NSIndexPath indexPathForItem:0 inSection:s];
-                [cv selectItemAtIndexPath:ip animated:NO scrollPosition:UICollectionViewScrollPositionNone];
-                if ([cv.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
-                    [cv.delegate collectionView:cv didSelectItemAtIndexPath:ip];
-                }
-                return;
-            }
-        }
-    } else if ([view isKindOfClass:[UITableView class]]) {
-        UITableView *tv = (UITableView *)view;
-        NSInteger sections = [tv numberOfSections];
-        for (NSInteger s = 0; s < sections; s++) {
-            if ([tv numberOfRowsInSection:s] > 0) {
-                NSIndexPath *ip = [NSIndexPath indexPathForRow:0 inSection:s];
-                [tv selectRowAtIndexPath:ip animated:NO scrollPosition:UITableViewScrollPositionNone];
-                if ([tv.delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)]) {
-                    [tv.delegate tableView:tv didSelectRowAtIndexPath:ip];
-                }
-                return;
-            }
-        }
-    }
-    for (UIView *sub in view.subviews) {
-        selectFirstTimelineCell(sub);
-    }
-}
+static UIView *findTextInputViewInController(UIViewController *root) {
+    if (!root) return nil;
 
-static void ensureTimelineLayerSelected() {
-    UIViewController *topVC = getTopViewController();
-    UIWindow *keyWin = nil;
-    NSArray *wins = [UIApplication sharedApplication].windows;
-    if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
-    
-    UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
-    if (!timelineVC && keyWin) timelineVC = findViewControllerOfClass(keyWin.rootViewController, @"TimelineViewController");
-    
-    if (timelineVC && timelineVC.view) {
-        selectFirstTimelineCell(timelineVC.view);
-    } else if (topVC && topVC.view) {
-        selectFirstTimelineCell(topVC.view);
+    NSString *className = NSStringFromClass([root class]);
+    if ([className containsString:@"TextInputVC"]) {
+        @try {
+            id input = [root valueForKey:@"inputTextView"];
+            if ([input isKindOfClass:[UITextView class]]) return (UIView *)input;
+        } @catch (NSException *exception) {
+            (void)exception;
+            // Fall back to hierarchy traversal for a class without KVC exposure.
+        }
     }
+
+    for (UIViewController *child in root.childViewControllers) {
+        UIView *input = findTextInputViewInController(child);
+        if (input) return input;
+    }
+    return nil;
 }
 
 static BOOL callSelectorOnTarget(id target, SEL sel) {
@@ -170,32 +145,21 @@ static BOOL callSelectorOnTarget(id target, SEL sel) {
     return NO;
 }
 
-static BOOL searchSelectorInHierarchy(UIViewController *vc, SEL sel) {
-    if (!vc) return NO;
-    if (callSelectorOnTarget(vc, sel)) return YES;
-    for (UIViewController *child in vc.childViewControllers) {
-        if (searchSelectorInHierarchy(child, sel)) return YES;
-    }
-    if (vc.parentViewController && callSelectorOnTarget(vc.parentViewController, sel)) return YES;
-    return NO;
-}
-
-static BOOL sendActionToButtonsInView(UIView *view, NSString *selectorKeyword) {
+static BOOL sendExactActionToButton(UIView *view, NSString *actionName) {
     if (!view) return NO;
     if ([view isKindOfClass:[UIButton class]]) {
-        UIButton *btn = (UIButton *)view;
-        for (id target in [btn allTargets]) {
-            NSArray *actions = [btn actionsForTarget:target forControlEvent:UIControlEventTouchUpInside];
-            for (NSString *act in actions) {
-                if ([act.lowercaseString containsString:selectorKeyword.lowercaseString]) {
-                    [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+        UIButton *button = (UIButton *)view;
+        for (id target in button.allTargets) {
+            for (NSString *action in [button actionsForTarget:target forControlEvent:UIControlEventTouchUpInside]) {
+                if ([action isEqualToString:actionName]) {
+                    [button sendActionsForControlEvents:UIControlEventTouchUpInside];
                     return YES;
                 }
             }
         }
     }
-    for (UIView *sub in view.subviews) {
-        if (sendActionToButtonsInView(sub, selectorKeyword)) return YES;
+    for (UIView *child in view.subviews) {
+        if (sendExactActionToButton(child, actionName)) return YES;
     }
     return NO;
 }
@@ -206,22 +170,29 @@ static BOOL triggerAutoSplitLayer() {
     NSArray *wins = [UIApplication sharedApplication].windows;
     if (wins.count > 0) keyWin = (UIWindow *)wins.firstObject;
     UIViewController *winRoot = keyWin ? keyWin.rootViewController : nil;
-    
-    // 1. Try searchSelectorInHierarchy on topVC directly
-    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplit:))) return YES;
-    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplitTimeline:))) return YES;
-    if (topVC && searchSelectorInHierarchy(topVC, @selector(onTapSplit))) return YES;
-    
-    // 2. Try searchSelectorInHierarchy on winRoot
-    if (winRoot && winRoot != topVC) {
-        if (searchSelectorInHierarchy(winRoot, @selector(onTapSplit:))) return YES;
-        if (searchSelectorInHierarchy(winRoot, @selector(onTapSplitTimeline:))) return YES;
-    }
-    
-    // 3. Fallback: Search all UIButtons in view hierarchy with split action
-    if (topVC && topVC.view && sendActionToButtonsInView(topVC.view, @"split")) return YES;
-    if (winRoot && winRoot.view && sendActionToButtonsInView(winRoot.view, @"split")) return YES;
-    
+
+    // IPA mapping: EditingPanelVC -> splitButton -> onTapSplit:.
+    UIViewController *editingPanelVC = findViewControllerOfClass(topVC, @"EditingPanelVC");
+    if (!editingPanelVC && winRoot) editingPanelVC = findViewControllerOfClass(winRoot, @"EditingPanelVC");
+    if (editingPanelVC && sendExactActionToButton(editingPanelVC.view, @"onTapSplit:")) return YES;
+    if (editingPanelVC && callSelectorOnTarget(editingPanelVC, @selector(onTapSplit:))) return YES;
+
+    // EditTimingVC uses the same split action on its own splitButton.
+    UIViewController *editTimingVC = findViewControllerOfClass(topVC, @"EditTimingVC");
+    if (!editTimingVC && winRoot) editTimingVC = findViewControllerOfClass(winRoot, @"EditTimingVC");
+    if (editTimingVC && sendExactActionToButton(editTimingVC.view, @"onTapSplit:")) return YES;
+    if (editTimingVC && callSelectorOnTarget(editTimingVC, @selector(onTapSplit:))) return YES;
+
+    // Some multi-select screens expose the equivalent action on MultiSelectorNavVC.
+    UIViewController *multiSelectorVC = findViewControllerOfClass(topVC, @"MultiSelectorNavVC");
+    if (!multiSelectorVC && winRoot) multiSelectorVC = findViewControllerOfClass(winRoot, @"MultiSelectorNavVC");
+    if (multiSelectorVC && sendExactActionToButton(multiSelectorVC.view, @"onTapSplitTimeline:")) return YES;
+    if (multiSelectorVC && callSelectorOnTarget(multiSelectorVC, @selector(onTapSplitTimeline:))) return YES;
+
+    // Last fallback: the exact action may be hosted by a container view.
+    if (topVC && sendExactActionToButton(topVC.view, @"onTapSplit:")) return YES;
+    if (winRoot && winRoot != topVC && sendExactActionToButton(winRoot.view, @"onTapSplit:")) return YES;
+
     return NO;
 }
 
@@ -235,39 +206,10 @@ static BOOL jumpToNextMarkerOrKeyframe() {
     UIViewController *previewVC = findViewControllerOfClass(topVC, @"PreviewControlBarVC");
     if (!previewVC && winRoot) previewVC = findViewControllerOfClass(winRoot, @"PreviewControlBarVC");
     
-    if (previewVC && [previewVC respondsToSelector:@selector(onTapMoveNext:)]) {
-        IMP imp = [previewVC methodForSelector:@selector(onTapMoveNext:)];
-        void (*func)(id, SEL, id) = (void *)imp;
-        func(previewVC, @selector(onTapMoveNext:), nil);
-        return YES;
-    }
-    
-    UIViewController *timelineVC = findViewControllerOfClass(topVC, @"TimelineViewController");
-    if (!timelineVC && winRoot) timelineVC = findViewControllerOfClass(winRoot, @"TimelineViewController");
-    
-    if (timelineVC && [timelineVC respondsToSelector:@selector(onTapTimeLabel:)]) {
-        IMP imp = [timelineVC methodForSelector:@selector(onTapTimeLabel:)];
-        void (*func)(id, SEL, id) = (void *)imp;
-        func(timelineVC, @selector(onTapTimeLabel:), nil);
-        return YES;
-    }
-    
-    SEL selectors[] = {
-        @selector(onTapMoveNext:),
-        @selector(onTapTimeLabel:),
-        @selector(seekToMarker),
-        @selector(onTapBookmark:),
-        @selector(onTapNextKeyframe:)
-    };
-    
-    for (size_t i = 0; i < sizeof(selectors)/sizeof(selectors[0]); i++) {
-        SEL s = selectors[i];
-        if (searchSelectorInHierarchy(topVC, s)) return YES;
-        if (winRoot && winRoot != topVC && searchSelectorInHierarchy(winRoot, s)) return YES;
-    }
-    
-    if (topVC.view) sendActionToButtonsInView(topVC.view, @"movenext");
-    if (winRoot && winRoot.view) sendActionToButtonsInView(winRoot.view, @"movenext");
+    // IPA mapping: PreviewControlBarVC -> mvNextButton -> onTapMoveNext:.
+    if (previewVC && sendExactActionToButton(previewVC.view, @"onTapMoveNext:")) return YES;
+    if (previewVC && callSelectorOnTarget(previewVC, @selector(onTapMoveNext:))) return YES;
+
     return NO;
 }
 
@@ -285,20 +227,26 @@ static void updateButtonState() {
 
 static void applyTextToInputDirectly(UIViewController *parentVC, NSString *line) {
     if (!line || line.length == 0) return;
-    
+
     [UIPasteboard generalPasteboard].string = line;
-    
-    UIView *inputView = findTargetInputView(parentVC.view);
+
+    UIView *inputView = findTextInputViewInController(parentVC);
+    if (!inputView) inputView = findTargetInputView(parentVC.view);
     if (!inputView && parentVC.parentViewController) {
-        inputView = findTargetInputView(parentVC.parentViewController.view);
+        inputView = findTextInputViewInController(parentVC.parentViewController);
+        if (!inputView) inputView = findTargetInputView(parentVC.parentViewController.view);
     }
     if (!inputView) {
         UIViewController *top = getTopViewController();
-        if (top) inputView = findTargetInputView(top.view);
+        if (top) {
+            inputView = findTextInputViewInController(top);
+            if (!inputView) inputView = findTargetInputView(top.view);
+        }
     }
     
     if ([inputView isKindOfClass:[UITextView class]]) {
         UITextView *tv = (UITextView *)inputView;
+        [tv becomeFirstResponder];
         tv.text = line;
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
@@ -311,7 +259,7 @@ static void applyTextToInputDirectly(UIViewController *parentVC, NSString *line)
 }
 
 static void processLineAtIndex(NSInteger index) {
-    if (!pendingTextLines || index >= pendingTextLines.count) {
+    if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) {
         pendingTextLines = nil;
         currentLineIndex = 0;
         isProcessingAutoBatch = NO;
@@ -333,16 +281,29 @@ static void processLineAtIndex(NSInteger index) {
         });
     } else {
         showHUDLog([NSString stringWithFormat:@"⏩ Nhảy mốc Marker dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
-        jumpToNextMarkerOrKeyframe();
+        BOOL didMove = jumpToNextMarkerOrKeyframe();
+        if (!didMove) {
+            pendingTextLines = nil;
+            currentLineIndex = 0;
+            isProcessingAutoBatch = NO;
+            updateButtonState();
+            showHUDLog(@"Khong tim thay PreviewControlBarVC.onTapMoveNext:");
+            return;
+        }
         
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            ensureTimelineLayerSelected();
-            
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 showHUDLog([NSString stringWithFormat:@"✂️ Cắt Layer dòng %ld/%lu...", (long)(index + 1), (unsigned long)pendingTextLines.count]);
-                triggerAutoSplitLayer();
+                BOOL didSplit = triggerAutoSplitLayer();
+                if (!didSplit) {
+                    pendingTextLines = nil;
+                    currentLineIndex = 0;
+                    isProcessingAutoBatch = NO;
+                    updateButtonState();
+                    showHUDLog(@"Khong tim thay Action: onTapSplit:");
+                    return;
+                }
                 
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     UIViewController *top = getTopViewController();
                     applyTextToInputDirectly(top, pendingTextLines[index]);
                     showHUDLog([NSString stringWithFormat:@"📝 Nạp dòng %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
@@ -351,7 +312,7 @@ static void processLineAtIndex(NSInteger index) {
                         processLineAtIndex(index + 1);
                     });
                 });
-            });
+
         });
     }
 }
@@ -375,8 +336,8 @@ static void startSequentialTextProcess(UIViewController *parentVC, NSString *raw
     }
     
     if (autoBatch) {
-        isProcessingAutoBatch = YES;
-        processLineAtIndex(0);
+        isProcessingAutoBatch = autoBatch;
+        if (autoBatch) processLineAtIndex(0);
     } else {
         updateButtonState();
     }
@@ -502,8 +463,11 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     
     [btnAutoAll addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         NSString *raw = textView.text;
-        startSequentialTextProcess(parentVC, raw, NO);
-        [modalVC dismissViewControllerAnimated:YES completion:nil];
+        [modalVC dismissViewControllerAnimated:YES completion:^{
+            dispatch_async(dispatch_get_main_queue(), ^{
+                startSequentialTextProcess(parentVC, raw, YES);
+            });
+        }];
     }] forControlEvents:UIControlEventTouchUpInside];
     
     [parentVC presentViewController:modalVC animated:YES completion:nil];
@@ -529,29 +493,11 @@ static CGPoint panStartPoint;
 
 - (void)buttonTapped:(UIButton *)sender {
     UIViewController *top = getTopViewController();
+    if (isProcessingAutoBatch) return;
     if (pendingTextLines && pendingTextLines.count > 0 && currentLineIndex < pendingTextLines.count) {
-        NSInteger targetIdx = currentLineIndex;
-        currentLineIndex++;
-        
-        if (targetIdx == 0) {
-            // Step 1: Nạp dòng 1 vào Layer 1
-            applyTextToInputDirectly(top, pendingTextLines[0]);
-            showHUDLog([NSString stringWithFormat:@"📝 [1/%lu] Nạp thành công: %@", (unsigned long)pendingTextLines.count, pendingTextLines[0]]);
-            updateButtonState();
-        } else {
-            // Step 2 & Step 3: Cắt Layer & Nạp dòng tương ứng
-            showHUDLog([NSString stringWithFormat:@"✂️ [%ld/%lu] Cắt Layer & Nạp...", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count]);
-            
-            ensureTimelineLayerSelected();
-            triggerAutoSplitLayer();
-            
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIViewController *latestTop = getTopViewController();
-                applyTextToInputDirectly(latestTop, pendingTextLines[targetIdx]);
-                showHUDLog([NSString stringWithFormat:@"📝 [%ld/%lu] Nạp thành công: %@", (long)(targetIdx + 1), (unsigned long)pendingTextLines.count, pendingTextLines[targetIdx]]);
-                updateButtonState();
-            });
-        }
+        isProcessingAutoBatch = YES;
+        processLineAtIndex(currentLineIndex);
+        return;
     } else {
         presentAutoTextModal(top);
     }
