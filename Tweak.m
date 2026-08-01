@@ -615,7 +615,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[AutoTextButtonHandler sharedInstance] action:@selector(handlePan:)];
             pan.cancelsTouchesInView = NO;
             pan.delaysTouchesBegan = NO;
-            autoTextBtn.gestureRecognizers = @[pan];
+            [autoTextBtn addGestureRecognizer:pan];
             
             [self.view addSubview:autoTextBtn];
             [self.view bringSubviewToFront:autoTextBtn];
