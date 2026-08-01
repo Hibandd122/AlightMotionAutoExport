@@ -531,6 +531,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
     btnTestSplit.titleLabel.font = [UIFont boldSystemFontOfSize:12.0];
     btnTestSplit.layer.cornerRadius = 10.0;
     btnTestSplit.translatesAutoresizingMaskIntoConstraints = NO;
+    btnTestSplit.hidden = YES;
     [card addSubview:btnTestSplit];
     
     UIButton *btnAutoAll = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -577,7 +578,7 @@ static void presentAutoTextModal(UIViewController *parentVC) {
         
         [btnAutoAll.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
         [btnAutoAll.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
-        [btnAutoAll.widthAnchor constraintEqualToConstant:160],
+        [btnAutoAll.widthAnchor constraintEqualToConstant:306],
         [btnAutoAll.heightAnchor constraintEqualToConstant:40],
         
         [btnCancel.topAnchor constraintEqualToAnchor:card.topAnchor constant:12],
