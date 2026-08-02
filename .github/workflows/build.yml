@@ -32,7 +32,13 @@ jobs:
       - name: Build Tweak
         run: |
           export THEOS=$GITHUB_WORKSPACE/theos
-          make package FINALPACKAGE=1
+          set +e
+          make package FINALPACKAGE=1 V=1 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          grep -E "error:|fatal error:|undefined reference|No rule to make" build.log | while IFS= read -r line; do
+            echo "::error title=Theos build::$line"
+          done
+          exit $status
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
