@@ -13,7 +13,7 @@ static BOOL isProcessingAutoBatch = NO;
 // Ended.  A real cell recognizer is still Possible when called from the batch,
 // so use a harmless recognizer subclass that reports the completed state
 // without mutating UIKit's private gesture state.
-@interface AutoTextFinishedGesture : UIGestureRecognizer
+@interface AutoTextFinishedGesture : UITapGestureRecognizer
 @property (nonatomic, weak) UIView *autoTextView;
 @end
 
@@ -289,7 +289,11 @@ static BOOL selectNextTimelineLayer() {
 
     AutoTextFinishedGesture *finishedGesture = [[AutoTextFinishedGesture alloc] init];
     finishedGesture.autoTextView = nextCell;
-    BOOL didTapCell = callSelectorOnTargetWithObject(nextCell, @selector(onTapCellWithGesture:), finishedGesture);
+    BOOL didTapCell = NO;
+    if ([nextCell respondsToSelector:@selector(onTapCellWithGesture:)]) {
+        [nextCell performSelector:@selector(onTapCellWithGesture:) withObject:finishedGesture];
+        didTapCell = YES;
+    }
 
     showHUDLog([NSString stringWithFormat:@"Mo layer %ld -> %ld (%@%@)",
                 (long)selected.item + 1,
@@ -393,37 +397,60 @@ static void applyTextToInputDirectly(UIViewController *parentVC, NSString *line)
     }
 }
 
+static void finishAutoTextBatch(NSString *message) {
+    pendingTextLines = nil;
+    currentLineIndex = 0;
+    isProcessingAutoBatch = NO;
+    updateButtonState();
+    showHUDLog(message);
+}
+
+static void processPrecutTextAtIndex(NSInteger index);
+
+static void writePrecutTextAtIndex(NSInteger index) {
+    if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) return;
+
+    UIViewController *top = getTopViewController();
+    NSString *line = pendingTextLines[index];
+    applyTextToInputDirectly(top, line);
+    showHUDLog([NSString stringWithFormat:@"Nap Text Layer %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, line]);
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        processPrecutTextAtIndex(index + 1);
+    });
+}
+
 static void processPrecutTextAtIndex(NSInteger index) {
     if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) {
-        pendingTextLines = nil;
-        currentLineIndex = 0;
-        isProcessingAutoBatch = NO;
-        updateButtonState();
-        showHUDLog(@"Da nap xong tat ca Text Layer!");
+        finishAutoTextBatch(@"Da nap xong tat ca Text Layer!");
         return;
     }
 
     currentLineIndex = index;
     updateButtonState();
 
-    if (index > 0 && !selectNextTimelineLayer()) {
-        pendingTextLines = nil;
-        currentLineIndex = 0;
-        isProcessingAutoBatch = NO;
-        updateButtonState();
-        showHUDLog(@"Khong tim thay Text Layer tiep theo trong Timeline:");
+    if (index == 0) {
+        writePrecutTextAtIndex(index);
         return;
     }
 
-    // Selection updates the Swift editor asynchronously. Give it enough time
-    // to attach the TextInputVC for the newly active layer before writing.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIViewController *top = getTopViewController();
-        applyTextToInputDirectly(top, pendingTextLines[index]);
-        showHUDLog([NSString stringWithFormat:@"Nap Text Layer %ld/%lu: %@", (long)(index + 1), (unsigned long)pendingTextLines.count, pendingTextLines[index]]);
+    // Commit Text 1 and release the editor before changing the selected layer.
+    UIViewController *top = getTopViewController();
+    UIView *activeInput = findTextInputViewInController(top);
+    if (!activeInput) activeInput = findTargetInputView(top.view);
+    [activeInput resignFirstResponder];
 
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            processPrecutTextAtIndex(index + 1);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!isProcessingAutoBatch || !pendingTextLines || index >= pendingTextLines.count) return;
+        if (!selectNextTimelineLayer()) {
+            finishAutoTextBatch(@"Khong tim thay Text Layer tiep theo trong Timeline:");
+            return;
+        }
+
+        // Selection updates the Swift editor asynchronously. Wait for the new
+        // TextInputVC before touching its text view.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            writePrecutTextAtIndex(index);
         });
     });
 }
