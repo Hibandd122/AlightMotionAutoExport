@@ -9,6 +9,30 @@ static NSInteger currentLineIndex = 0;
 static UIButton *globalAutoTextBtn = nil;
 static BOOL isProcessingAutoBatch = NO;
 
+// TimelineCell.onTapCellWithGesture: ignores a recognizer unless its state is
+// Ended.  A real cell recognizer is still Possible when called from the batch,
+// so use a harmless recognizer subclass that reports the completed state
+// without mutating UIKit's private gesture state.
+@interface AutoTextFinishedGesture : UIGestureRecognizer
+@property (nonatomic, weak) UIView *autoTextView;
+@end
+
+@implementation AutoTextFinishedGesture
+- (UIGestureRecognizerState)state {
+    return UIGestureRecognizerStateEnded;
+}
+
+- (UIView *)view {
+    return self.autoTextView;
+}
+
+- (CGPoint)locationInView:(UIView *)view {
+    UIView *target = self.autoTextView;
+    if (!target) return CGPointZero;
+    return [target convertPoint:CGPointMake(CGRectGetMidX(target.bounds), CGRectGetMidY(target.bounds)) toView:view];
+}
+@end
+
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -195,8 +219,6 @@ static UICollectionView *findSelectedTimelineCollectionView(UIView *view) {
     return nil;
 }
 
-static BOOL triggerTimelineCellSelection(UIView *cell);
-
 static id valueForKeySafely(id object, NSString *key) {
     if (!object || key.length == 0) return nil;
     @try {
@@ -229,39 +251,6 @@ static NSIndexPath *selectedTimelineIndexPath(UIViewController *timelineVC, UICo
     return nil;
 }
 
-static BOOL triggerTimelineCellSelection(UIView *cell) {
-    if (!cell) return NO;
-    UIGestureRecognizer *selectGesture = nil;
-    @try {
-        id gesture = [cell valueForKey:@"selectGesture"];
-        if ([gesture isKindOfClass:[UIGestureRecognizer class]]) {
-            selectGesture = (UIGestureRecognizer *)gesture;
-        }
-    } @catch (NSException *exception) {
-        (void)exception;
-    }
-    if (!selectGesture) return NO;
-
-    @try {
-        NSArray *targets = [selectGesture valueForKey:@"_targets"];
-        for (id targetInfo in targets) {
-            id target = [targetInfo valueForKey:@"_target"];
-            id actionValue = [targetInfo valueForKey:@"_action"];
-            SEL action = NULL;
-            if ([actionValue isKindOfClass:[NSString class]]) {
-                action = NSSelectorFromString((NSString *)actionValue);
-            } else if ([actionValue isKindOfClass:[NSValue class]]) {
-                [actionValue getValue:&action];
-            }
-            if (!action) continue;
-            if (callSelectorOnTargetWithObject(target, action, selectGesture)) return YES;
-        }
-    } @catch (NSException *exception) {
-        (void)exception;
-    }
-    return NO;
-}
-
 static BOOL selectNextTimelineLayer() {
     UIViewController *topVC = getTopViewController();
     UIWindow *keyWin = nil;
@@ -292,24 +281,22 @@ static BOOL selectNextTimelineLayer() {
     [collectionView layoutIfNeeded];
     [collectionView selectItemAtIndexPath:next animated:NO scrollPosition:UICollectionViewScrollPositionNone];
 
-    // Keep the same order as a real user tap: UICollectionView notifies the
-    // app delegate first, then the cell's own gesture target runs.
-    BOOL didSelectInTimeline = NO;
-    id delegate = collectionView.delegate;
-    if ([delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
-        [delegate collectionView:collectionView didSelectItemAtIndexPath:next];
-        didSelectInTimeline = YES;
+    UICollectionViewCell *nextCell = [collectionView cellForItemAtIndexPath:next];
+    if (!nextCell) {
+        showHUDLog([NSString stringWithFormat:@"Layer %ld chua hien cell tren Timeline", (long)next.item + 1]);
+        return NO;
     }
 
-    UICollectionViewCell *nextCell = [collectionView cellForItemAtIndexPath:next];
-    BOOL didTapCell = triggerTimelineCellSelection(nextCell);
+    AutoTextFinishedGesture *finishedGesture = [[AutoTextFinishedGesture alloc] init];
+    finishedGesture.autoTextView = nextCell;
+    BOOL didTapCell = callSelectorOnTargetWithObject(nextCell, @selector(onTapCellWithGesture:), finishedGesture);
 
     showHUDLog([NSString stringWithFormat:@"Mo layer %ld -> %ld (%@%@)",
                 (long)selected.item + 1,
                 (long)next.item + 1,
                 didTapCell ? @"tap" : @"select",
-                didSelectInTimeline ? @" + app" : @""]);
-    return didTapCell || didSelectInTimeline;
+                didTapCell ? @" + app" : @""]);
+    return didTapCell;
 }
 
 static BOOL triggerAutoSplitLayer() {
