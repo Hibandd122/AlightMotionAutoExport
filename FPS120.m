@@ -46,16 +46,16 @@ static void AMApply120FPS(id controller) {
 
     // Keep a tweak-local marker so the create hook can re-apply the value just
     // before the original project creation flow runs.
-    objc_setAssociatedObject(controller, AMFPS120SelectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(controller, &AMFPS120SelectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 static BOOL AMIs120FPSSelected(id controller) {
-    return [objc_getAssociatedObject(controller, AMFPS120SelectedKey) boolValue];
+    return [objc_getAssociatedObject(controller, &AMFPS120SelectedKey) boolValue];
 }
 
 static void AMInstall120Button(UIViewController *controller) {
     if (![controller isKindOfClass:[UIViewController class]]) return;
-    if (objc_getAssociatedObject(controller, AMFPS120TargetKey)) return;
+    if (objc_getAssociatedObject(controller, &AMFPS120TargetKey)) return;
 
     UIView *root = controller.view;
     if (!root) return;
@@ -70,7 +70,7 @@ static void AMInstall120Button(UIViewController *controller) {
 
     AMFPS120Target *target = [AMFPS120Target new];
     target.controller = controller;
-    objc_setAssociatedObject(controller, AMFPS120TargetKey, target, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(controller, &AMFPS120TargetKey, target, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.tag = AMFPS120ButtonTag;
