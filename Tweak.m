@@ -2,6 +2,8 @@
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
+extern void AMInstallFPS120ForController(UIViewController *controller);
+
 static void sendCompletionNotification() {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
     content.title = @"Alight Motion MOD";
@@ -62,6 +64,7 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
     forceDarkMode();
 
     NSString *className = NSStringFromClass([self class]);
+    AMInstallFPS120ForController(self);
     if (![className containsString:@"ExportPreviewVC"] && ![className containsString:@"ExportVC"]) return;
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),

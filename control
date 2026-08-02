@@ -1,9 +1,9 @@
 Package: com.alightmotion.autoexport
 Name: AlightMotionAutoExport
 Depends: mobilesubstrate
-Version: 1.0.0
+Version: 1.1.0
 Architecture: iphoneos-arm
-Description: Auto-save export and notify
+Description: Auto-save export, notify, and add a 120 FPS project option
 Maintainer: Cracked-2m96
 Author: Cracked-2m96
 Section: Tweaks
