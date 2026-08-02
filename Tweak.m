@@ -17,8 +17,30 @@ static void sendCompletionNotification() {
 
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
 
+static void forceDarkMode() {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            forceDarkMode();
+        });
+        return;
+    }
+
+    UIApplication *application = [UIApplication sharedApplication];
+    for (UIWindow *window in application.windows) {
+        window.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        window.rootViewController.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        window.rootViewController.view.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    }
+}
+
 static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     if (orig_viewDidAppear) orig_viewDidAppear(self, _cmd, animated);
+
+    // Alight Motion already uses dynamic system colors for its theme. Force
+    // the window and every newly presented controller onto the dark trait.
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    forceDarkMode();
 
     NSString *className = NSStringFromClass([self class]);
     if (![className containsString:@"ExportPreviewVC"] && ![className containsString:@"ExportVC"]) return;
@@ -44,4 +66,8 @@ __attribute__((constructor)) static void initHooks() {
 
     orig_viewDidAppear = (void *)method_getImplementation(method);
     method_setImplementation(method, (IMP)hook_viewDidAppear);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        forceDarkMode();
+    });
 }
