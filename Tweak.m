@@ -172,21 +172,6 @@ static BOOL callSelectorOnTarget(id target, SEL sel) {
     return NO;
 }
 
-static BOOL callSelectorOnTargetWithObject(id target, SEL sel, id object) {
-    if (!target || ![target respondsToSelector:sel]) return NO;
-    IMP imp = [target methodForSelector:sel];
-    Method method = class_getInstanceMethod([target class], sel);
-    int args = method ? method_getNumberOfArguments(method) : 2;
-    if (args > 2) {
-        void (*func)(id, SEL, id) = (void *)imp;
-        func(target, sel, object);
-    } else {
-        void (*func)(id, SEL) = (void *)imp;
-        func(target, sel);
-    }
-    return YES;
-}
-
 static BOOL sendExactActionToButton(UIView *view, NSString *actionName) {
     if (!view) return NO;
     if ([view isKindOfClass:[UIButton class]] && isViewCurrentlyVisible(view)) {
