@@ -16,6 +16,25 @@ static void sendCompletionNotification() {
 }
 
 static void (*orig_viewDidAppear)(UIViewController *, SEL, BOOL);
+static UITraitCollection *(*orig_viewTraitCollection)(UIView *, SEL);
+static UITraitCollection *(*orig_viewControllerTraitCollection)(UIViewController *, SEL);
+
+static UITraitCollection *darkTraitCollection(UITraitCollection *original) {
+    UITraitCollection *dark = [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleDark];
+    if (!original) return dark;
+    if (original.userInterfaceStyle == UIUserInterfaceStyleDark) return original;
+    return [UITraitCollection traitCollectionWithTraitsFromCollections:@[original, dark]];
+}
+
+static UITraitCollection *hook_viewTraitCollection(UIView *self, SEL _cmd) {
+    UITraitCollection *original = orig_viewTraitCollection ? orig_viewTraitCollection(self, _cmd) : nil;
+    return darkTraitCollection(original);
+}
+
+static UITraitCollection *hook_viewControllerTraitCollection(UIViewController *self, SEL _cmd) {
+    UITraitCollection *original = orig_viewControllerTraitCollection ? orig_viewControllerTraitCollection(self, _cmd) : nil;
+    return darkTraitCollection(original);
+}
 
 static void forceDarkMode() {
     if (![NSThread isMainThread]) {
@@ -60,6 +79,18 @@ static void hook_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) 
 }
 
 __attribute__((constructor)) static void initHooks() {
+    Method viewTraitMethod = class_getInstanceMethod([UIView class], @selector(traitCollection));
+    if (viewTraitMethod) {
+        orig_viewTraitCollection = (void *)method_getImplementation(viewTraitMethod);
+        method_setImplementation(viewTraitMethod, (IMP)hook_viewTraitCollection);
+    }
+
+    Method viewControllerTraitMethod = class_getInstanceMethod([UIViewController class], @selector(traitCollection));
+    if (viewControllerTraitMethod) {
+        orig_viewControllerTraitCollection = (void *)method_getImplementation(viewControllerTraitMethod);
+        method_setImplementation(viewControllerTraitMethod, (IMP)hook_viewControllerTraitCollection);
+    }
+
     Class vcClass = objc_getClass("UIViewController");
     Method method = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (!method) return;
