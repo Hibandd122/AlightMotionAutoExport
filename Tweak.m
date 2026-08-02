@@ -229,34 +229,6 @@ static NSIndexPath *selectedTimelineIndexPath(UIViewController *timelineVC, UICo
     return nil;
 }
 
-static BOOL callTimelineSelectionDelegate(id timelineView, UICollectionView *collectionView, NSIndexPath *indexPath) {
-    SEL selector = @selector(collectionView:didSelectItemAtIndexPath:);
-    if (!timelineView || ![timelineView respondsToSelector:selector]) return NO;
-    IMP imp = [timelineView methodForSelector:selector];
-    void (*func)(id, SEL, UICollectionView *, NSIndexPath *) = (void *)imp;
-    func(timelineView, selector, collectionView, indexPath);
-    return YES;
-}
-
-static BOOL triggerExactTimelineCellTap(UICollectionViewCell *cell) {
-    if (!cell) return NO;
-
-    id gestureObject = valueForKeySafely(cell, @"selectGesture");
-    if ([gestureObject isKindOfClass:[UIGestureRecognizer class]]) {
-        SEL selector = @selector(onTapCellWithGesture:);
-        if ([cell respondsToSelector:selector]) {
-            IMP imp = [cell methodForSelector:selector];
-            void (*func)(id, SEL, UIGestureRecognizer *) = (void *)imp;
-            func(cell, selector, (UIGestureRecognizer *)gestureObject);
-            return YES;
-        }
-    }
-
-    // Keep the target/action fallback for a cell whose Swift class is exposed
-    // through a subclass at runtime.
-    return triggerTimelineCellSelection(cell);
-}
-
 static BOOL triggerTimelineCellSelection(UIView *cell) {
     if (!cell) return NO;
     UIGestureRecognizer *selectGesture = nil;
@@ -317,14 +289,20 @@ static BOOL selectNextTimelineLayer() {
     if (nextItem >= [collectionView numberOfItemsInSection:selected.section]) return NO;
 
     NSIndexPath *next = [NSIndexPath indexPathForItem:nextItem inSection:selected.section];
-    [collectionView scrollToItemAtIndexPath:next atScrollPosition:UICollectionViewScrollPositionCenteredVertically animated:NO];
     [collectionView layoutIfNeeded];
     [collectionView selectItemAtIndexPath:next animated:NO scrollPosition:UICollectionViewScrollPositionNone];
 
+    // Keep the same order as a real user tap: UICollectionView notifies the
+    // app delegate first, then the cell's own gesture target runs.
+    BOOL didSelectInTimeline = NO;
+    id delegate = collectionView.delegate;
+    if ([delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) {
+        [delegate collectionView:collectionView didSelectItemAtIndexPath:next];
+        didSelectInTimeline = YES;
+    }
+
     UICollectionViewCell *nextCell = [collectionView cellForItemAtIndexPath:next];
-    BOOL didTapCell = triggerExactTimelineCellTap(nextCell);
-    BOOL didSelectInTimeline = callTimelineSelectionDelegate(collectionView, collectionView, next);
-    if (!didSelectInTimeline) didSelectInTimeline = callTimelineSelectionDelegate(collectionView.delegate, collectionView, next);
+    BOOL didTapCell = triggerTimelineCellSelection(nextCell);
 
     showHUDLog([NSString stringWithFormat:@"Mo layer %ld -> %ld (%@%@)",
                 (long)selected.item + 1,
