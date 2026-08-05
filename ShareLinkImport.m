@@ -79,9 +79,12 @@ static void AMOpenPackageURL(NSURL *fileURL) {
 }
 
 static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
-    NSString *encoded = [link stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-    NSString *endpoint = [NSString stringWithFormat:@"https://am-share-extractor.vercel.app/extract?mode=full&url=%@", encoded];
-    NSURL *url = [NSURL URLWithString:endpoint];
+    NSURLComponents *components = [NSURLComponents componentsWithString:@"https://am-share-extractor.vercel.app/extract"];
+    components.queryItems = @[
+        [NSURLQueryItem queryItemWithName:@"mode" value:@"full"],
+        [NSURLQueryItem queryItemWithName:@"url" value:link]
+    ];
+    NSURL *url = components.URL;
     if (!url) {
         AMShowMessage(@"Link không hợp lệ", @"Không thể tạo yêu cầu tải project.");
         return;
@@ -99,7 +102,11 @@ static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
         });
 
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-        if (error || !data.length || (http.statusCode >= 400)) {
+        NSString *contentType = [http.allHeaderFields[@"Content-Type"] lowercaseString];
+        BOOL looksLikeZip = data.length >= 4 && ((const unsigned char *)data.bytes)[0] == 'P' &&
+                             ((const unsigned char *)data.bytes)[1] == 'K';
+        if (error || !data.length || (http.statusCode >= 400) ||
+            ![contentType containsString:@"application/zip"] || !looksLikeZip) {
             AMShowMessage(@"Tải project thất bại", error.localizedDescription ?: @"Link hết hạn hoặc API không trả về project package.");
             return;
         }
