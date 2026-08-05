@@ -8,15 +8,21 @@ static const NSInteger AMShareLinkButtonTag = 120121;
 
 @interface AMShareLinkTarget : NSObject
 @property(nonatomic, weak) UIViewController *controller;
-@property(nonatomic, weak) UIButton *button;
+@property(nonatomic, strong) UIButton *button;
+@property(nonatomic, strong) UIView *progressPanel;
+@property(nonatomic, strong) UILabel *progressLabel;
 - (void)openShareLink:(UIButton *)sender;
 @end
 
-static UIViewController *AMTopViewController(void) {
-    UIWindow *window = nil;
+static UIWindow *AMKeyWindow(void) {
     for (UIWindow *candidate in [UIApplication sharedApplication].windows) {
-        if (candidate.isKeyWindow) { window = candidate; break; }
+        if (candidate.isKeyWindow) return candidate;
     }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
+
+static UIViewController *AMTopViewController(void) {
+    UIWindow *window = AMKeyWindow();
     UIViewController *controller = window.rootViewController;
     while (controller.presentedViewController) controller = controller.presentedViewController;
     if ([controller isKindOfClass:[UINavigationController class]]) {
@@ -39,42 +45,111 @@ static void AMShowMessage(NSString *title, NSString *message) {
     });
 }
 
+static void AMShowProgress(AMShareLinkTarget *target, NSString *status) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = AMKeyWindow();
+        UIView *host = window ?: target.controller.view;
+        if (!host) return;
+
+        if (!target.progressPanel) {
+            CGFloat width = MIN(host.bounds.size.width - 32.0, 360.0);
+            UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((host.bounds.size.width - width) / 2.0,
+                                                                       host.safeAreaInsets.top + 62.0,
+                                                                       width,
+                                                                       66.0)];
+            panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.97];
+            panel.layer.cornerRadius = 14.0;
+            panel.layer.borderWidth = 1.0;
+            panel.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
+            panel.layer.shadowColor = [UIColor blackColor].CGColor;
+            panel.layer.shadowOpacity = 0.35;
+            panel.layer.shadowRadius = 10.0;
+            panel.layer.zPosition = 3000.0;
+
+            UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+            spinner.frame = CGRectMake(16.0, 16.0, 34.0, 34.0);
+            [spinner startAnimating];
+            [panel addSubview:spinner];
+
+            UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(58.0, 11.0, width - 72.0, 44.0)];
+            label.textColor = [UIColor whiteColor];
+            label.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
+            label.numberOfLines = 2;
+            target.progressLabel = label;
+            [panel addSubview:label];
+            target.progressPanel = panel;
+            [host addSubview:panel];
+        }
+
+        target.progressLabel.text = status;
+        [target.progressPanel.superview bringSubviewToFront:target.progressPanel];
+    });
+}
+
+static void AMHideProgress(AMShareLinkTarget *target) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [target.progressPanel removeFromSuperview];
+        target.progressPanel = nil;
+        target.progressLabel = nil;
+    });
+}
+
 static BOOL AMLooksLikeShareLink(NSString *value) {
-    NSURL *url = [NSURL URLWithString:[value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+    NSString *trimmed = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSURL *url = [NSURL URLWithString:trimmed];
     NSString *host = url.host.lowercaseString;
     NSString *path = url.path.lowercaseString;
-    return url && (url.scheme.lowercaseString.length > 0) &&
+    return url && [url.scheme.lowercaseString isEqualToString:@"https"] &&
            [host isEqualToString:@"alightcreative.com"] &&
            [path containsString:@"/am/share/"];
 }
 
-static void AMOpenPackageURL(NSURL *fileURL) {
-    if (!fileURL) return;
+static BOOL AMDispatchURLToApp(NSURL *url) {
+    if (!url) return NO;
+    UIApplication *application = [UIApplication sharedApplication];
+    id delegate = application.delegate;
+    NSDictionary *options = @{};
+
+    SEL modern = @selector(application:openURL:options:);
+    if ([delegate respondsToSelector:modern]) {
+        BOOL (*call)(id, SEL, UIApplication *, NSURL *, NSDictionary *) = (void *)objc_msgSend;
+        if (call(delegate, modern, application, url, options)) return YES;
+    }
+
+    SEL legacy = @selector(application:openURL:sourceApplication:annotation:);
+    if ([delegate respondsToSelector:legacy]) {
+        BOOL (*call)(id, SEL, UIApplication *, NSURL *, NSString *, id) = (void *)objc_msgSend;
+        if (call(delegate, legacy, application, url, nil, nil)) return YES;
+    }
+
+    SEL handle = NSSelectorFromString(@"handleOpenURL:");
+    if ([delegate respondsToSelector:handle]) {
+        BOOL (*call)(id, SEL, NSURL *) = (void *)objc_msgSend;
+        if (call(delegate, handle, url)) return YES;
+    }
+    return NO;
+}
+
+static NSURL *AMBuildAppShareURL(NSString *shareLink) {
+    NSURLComponents *source = [NSURLComponents componentsWithString:shareLink];
+    if (!source) return nil;
+    source.scheme = @"com.alightcreative.motion";
+    return source.URL;
+}
+
+static void AMOpenPackageURL(NSURL *fileURL, NSString *shareLink) {
+    if (!fileURL && !shareLink.length) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIApplication *application = [UIApplication sharedApplication];
-        id delegate = application.delegate;
-        NSDictionary *options = @{};
+        if (AMDispatchURLToApp(fileURL)) return;
 
-        // The app registers these handlers for project-package links/files.
-        SEL modern = @selector(application:openURL:options:);
-        if ([delegate respondsToSelector:modern]) {
-            BOOL (*call)(id, SEL, UIApplication *, NSURL *, NSDictionary *) = (void *)objc_msgSend;
-            if (call(delegate, modern, application, fileURL, options)) return;
-        }
+        // Alight Motion's own project-package flow is registered on this
+        // internal scheme. The file URL is attempted first; the share-link
+        // fallback reaches the app's package importer when it rejects a
+        // locally-created ZIP URL.
+        NSURL *appShareURL = AMBuildAppShareURL(shareLink);
+        if (AMDispatchURLToApp(appShareURL)) return;
 
-        SEL legacy = @selector(application:openURL:sourceApplication:annotation:);
-        if ([delegate respondsToSelector:legacy]) {
-            BOOL (*call)(id, SEL, UIApplication *, NSURL *, NSString *, id) = (void *)objc_msgSend;
-            if (call(delegate, legacy, application, fileURL, nil, nil)) return;
-        }
-
-        SEL handle = NSSelectorFromString(@"handleOpenURL:");
-        if ([delegate respondsToSelector:handle]) {
-            BOOL (*call)(id, SEL, NSURL *) = (void *)objc_msgSend;
-            if (call(delegate, handle, fileURL)) return;
-        }
-
-        AMShowMessage(@"Không thể nhập project", @"Alight Motion không nhận file project package ở phiên bản này.");
+        AMShowMessage(@"Import failed", @"Alight Motion did not accept the project package.");
     });
 }
 
@@ -86,19 +161,20 @@ static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
     ];
     NSURL *url = components.URL;
     if (!url) {
-        AMShowMessage(@"Link không hợp lệ", @"Không thể tạo yêu cầu tải project.");
+        AMShowMessage(@"Invalid link", @"Could not create the download request.");
         return;
     }
 
     UIButton *button = target.button;
     button.enabled = NO;
-    [button setTitle:@"Đang tải project…" forState:UIControlStateNormal];
+    [button setTitle:@"Loading..." forState:UIControlStateNormal];
+    AMShowProgress(target, @"Downloading project package...");
 
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithURL:url
                                                                completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             button.enabled = YES;
-            [button setTitle:@"Nhập từ link share" forState:UIControlStateNormal];
+            [button setTitle:@"Import share link" forState:UIControlStateNormal];
         });
 
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
@@ -107,17 +183,24 @@ static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
                              ((const unsigned char *)data.bytes)[1] == 'K';
         if (error || !data.length || (http.statusCode >= 400) ||
             ![contentType containsString:@"application/zip"] || !looksLikeZip) {
-            AMShowMessage(@"Tải project thất bại", error.localizedDescription ?: @"Link hết hạn hoặc API không trả về project package.");
+            AMHideProgress(target);
+            AMShowMessage(@"Download failed", error.localizedDescription ?: @"The API did not return a valid project ZIP.");
             return;
         }
 
         NSString *name = [NSString stringWithFormat:@"alightmotion_share_%@.zip", [NSUUID UUID].UUIDString];
         NSURL *fileURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
         if (![data writeToURL:fileURL atomically:YES]) {
-            AMShowMessage(@"Lưu project thất bại", @"Không thể lưu project package vào bộ nhớ tạm.");
+            AMHideProgress(target);
+            AMShowMessage(@"Save failed", @"Could not save the project package.");
             return;
         }
-        AMOpenPackageURL(fileURL);
+
+        AMShowProgress(target, @"Opening project in Alight Motion...");
+        AMOpenPackageURL(fileURL, link);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            AMHideProgress(target);
+        });
     }];
     [task resume];
 }
@@ -128,8 +211,8 @@ static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
     UIViewController *presenter = self.controller ?: AMTopViewController();
     if (!presenter) return;
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Nhập link share"
-                                                                     message:@"Dán link Alight Motion share để nhập project kèm toàn bộ media."
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import share link"
+                                                                     message:@"Paste an Alight Motion share link to import the project and its media."
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.placeholder = @"https://alightcreative.com/am/share/u/...";
@@ -138,11 +221,11 @@ static void AMDownloadSharePackage(AMShareLinkTarget *target, NSString *link) {
         field.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     __weak AMShareLinkTarget *weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Nhập" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Import" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *link = alert.textFields.firstObject.text ?: @"";
         if (!AMLooksLikeShareLink(link)) {
-            AMShowMessage(@"Link không hợp lệ", @"Hãy dùng link dạng alightcreative.com/am/share/…");
+            AMShowMessage(@"Invalid link", @"Use an https://alightcreative.com/am/share/... link.");
             return;
         }
         AMDownloadSharePackage(weakSelf, link);
@@ -165,6 +248,8 @@ void AMInstallShareLinkImportForController(UIViewController *controller) {
 
     UIView *root = controller.view;
     if (!root) return;
+    UIWindow *window = AMKeyWindow();
+    UIView *host = window ?: root;
 
     AMShareLinkTarget *target = [AMShareLinkTarget new];
     target.controller = controller;
@@ -174,13 +259,25 @@ void AMInstallShareLinkImportForController(UIViewController *controller) {
     target.button = button;
     button.tag = AMShareLinkButtonTag;
     button.accessibilityIdentifier = @"alightmotion.import.share.link";
-    [button setTitle:@"Nhập từ link share" forState:UIControlStateNormal];
+    [button setTitle:@"Import share link" forState:UIControlStateNormal];
     button.titleLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
-    button.backgroundColor = [UIColor colorWithRed:0.10 green:0.45 blue:0.95 alpha:1.0];
+    button.backgroundColor = [UIColor colorWithRed:0.05 green:0.45 blue:1.0 alpha:1.0];
     [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    button.layer.cornerRadius = 10.0;
-    button.frame = CGRectMake(20.0, MAX(70.0, root.bounds.size.height - 120.0), root.bounds.size.width - 40.0, 46.0);
-    button.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+    button.layer.cornerRadius = 12.0;
+    button.layer.borderWidth = 1.0;
+    button.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
+    button.layer.shadowColor = [UIColor blackColor].CGColor;
+    button.layer.shadowOpacity = 0.35;
+    button.layer.shadowRadius = 8.0;
+
+    CGFloat width = MIN(host.bounds.size.width - 32.0, 190.0);
+    button.frame = CGRectMake(host.bounds.size.width - width - 16.0,
+                              host.safeAreaInsets.top + 10.0,
+                              width,
+                              46.0);
+    button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
+    button.layer.zPosition = 2500.0;
     [button addTarget:target action:@selector(openShareLink:) forControlEvents:UIControlEventTouchUpInside];
-    [root addSubview:button];
+    [host addSubview:button];
+    [host bringSubviewToFront:button];
 }
