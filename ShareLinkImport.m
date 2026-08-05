@@ -134,7 +134,30 @@ static NSURL *AMBuildAppShareURL(NSString *shareLink) {
     NSURLComponents *source = [NSURLComponents componentsWithString:shareLink];
     if (!source) return nil;
     source.scheme = @"com.alightcreative.motion";
+    source.query = nil;
     return source.URL;
+}
+
+static void AMOpenAppShareURL(NSURL *url) {
+    if (!url) {
+        AMShowMessage(@"Import failed", @"Could not create the Alight Motion project link.");
+        return;
+    }
+
+    UIApplication *application = [UIApplication sharedApplication];
+    if ([application respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+        [application openURL:url options:@{} completionHandler:^(BOOL success) {
+            if (success) return;
+            if (!AMDispatchURLToApp(url)) {
+                AMShowMessage(@"Import failed", @"Alight Motion did not open the project package.");
+            }
+        }];
+        return;
+    }
+
+    if (!AMDispatchURLToApp(url)) {
+        AMShowMessage(@"Import failed", @"Alight Motion did not open the project package.");
+    }
 }
 
 static void AMOpenPackageURL(NSURL *fileURL, NSString *shareLink) {
@@ -147,9 +170,7 @@ static void AMOpenPackageURL(NSURL *fileURL, NSString *shareLink) {
         // fallback reaches the app's package importer when it rejects a
         // locally-created ZIP URL.
         NSURL *appShareURL = AMBuildAppShareURL(shareLink);
-        if (AMDispatchURLToApp(appShareURL)) return;
-
-        AMShowMessage(@"Import failed", @"Alight Motion did not accept the project package.");
+        AMOpenAppShareURL(appShareURL);
     });
 }
 
