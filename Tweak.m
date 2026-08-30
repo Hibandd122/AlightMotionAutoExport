@@ -164,8 +164,10 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 - (NSString *)consumeNextLineText {
     if (self.currentIndex < self.lyricsLines.count) {
         NSString *line = self.lyricsLines[self.currentIndex];
-        self.currentIndex++;
-        [self saveToDisk];
+        if (self.currentIndex + 1 < self.lyricsLines.count) {
+            self.currentIndex++;
+            [self saveToDisk];
+        }
         return line;
     }
     return nil;
@@ -698,13 +700,8 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         self.nextBtn.hidden = YES;
         [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
         [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
-    } else if (mgr.currentIndex >= mgr.lyricsLines.count) {
-        self.prevBtn.hidden = NO;
-        self.nextBtn.hidden = YES;
-        [self.versePillBtn setTitle:@"🎉 Đã Điền Hết Lời (Chạm Để Lặp Lại)" forState:UIControlStateNormal];
-        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
     } else {
-        self.prevBtn.hidden = NO;
+        self.prevBtn.hidden = (mgr.currentIndex == 0);
         self.nextBtn.hidden = (mgr.currentIndex + 1 >= mgr.lyricsLines.count);
         NSUInteger cur = mgr.currentIndex + 1;
         NSString *line = [mgr currentLineText] ?: @"";
@@ -718,13 +715,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count == 0) {
         [self loadTapped];
-        return;
-    }
-
-    if (mgr.currentIndex >= mgr.lyricsLines.count) {
-        [mgr resetToFirstVerse];
-        [self refreshDisplay];
-        AudioServicesPlaySystemSound(1519);
         return;
     }
 
