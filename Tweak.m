@@ -18,11 +18,25 @@ static void AMNotifyUser(NSString *title, NSString *body) {
                                                                   withCompletionHandler:nil];
 }
 
+#pragma mark - Settings & Preferences Storage
+
+static BOOL AMIsAutoSaveEnabled(void) {
+    NSNumber *val = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_AutoSaveToPhotos"];
+    if (val == nil) return YES; // Default ON
+    return [val boolValue];
+}
+
+static void AMSetAutoSaveEnabled(BOOL enabled) {
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"AM_AutoSaveToPhotos"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
 #pragma mark - Auto Save To Camera Roll Engine
 
 static BOOL hasSavedRecentVideo = NO;
 
 static void AMAutoSaveVideoAtPath(NSString *filePath) {
+    if (!AMIsAutoSaveEnabled()) return;
     if (!filePath || filePath.length == 0) return;
     if (hasSavedRecentVideo) return;
 
@@ -207,7 +221,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     CGFloat bottomY = self.view.bounds.size.height - 54;
     CGFloat width = self.view.bounds.size.width;
 
-    // Paste Button
     self.pasteButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.pasteButton.frame = CGRectMake(16, bottomY, 70, 42);
     [self.pasteButton setTitle:@"📋 Dán" forState:UIControlStateNormal];
@@ -219,7 +232,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.pasteButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.pasteButton];
 
-    // Hide Keyboard Button
     self.dismissKeyboardButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.dismissKeyboardButton.frame = CGRectMake(92, bottomY, 75, 42);
     [self.dismissKeyboardButton setTitle:@"⌨️ Ẩn phím" forState:UIControlStateNormal];
@@ -231,7 +243,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.dismissKeyboardButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.dismissKeyboardButton];
 
-    // Apply Button
     CGFloat applyX = 173;
     CGFloat applyW = width - applyX - 64;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -245,7 +256,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.applyButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.applyButton];
 
-    // Close Button
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.closeButton.frame = CGRectMake(width - 58, bottomY, 46, 42);
     [self.closeButton setTitle:@"Đóng" forState:UIControlStateNormal];
@@ -347,6 +357,133 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
+#pragma mark - Home Settings Dashboard Modal (Mở từ nút nổi ở Trang Chủ)
+
+@interface AMHomeSettingsViewController : UIViewController
+@end
+
+@implementation AMHomeSettingsViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.11 alpha:0.98];
+
+    CGFloat w = self.view.bounds.size.width;
+
+    // Header
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, w - 40, 28)];
+    titleLabel.text = @"⚙️ Cài Đặt Alight Motion Mod";
+    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    [self.view addSubview:titleLabel];
+
+    // Card 1: Batch Lyrics Manager
+    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 90)];
+    card1.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
+    card1.layer.cornerRadius = 14.0;
+    card1.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:card1];
+
+    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 32, 22)];
+    l1.text = @"📝 Quản Lý Lời Bài Hát (Batch Lyrics)";
+    l1.textColor = [UIColor whiteColor];
+    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    [card1 addSubview:l1];
+
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    UILabel *l1Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card1.bounds.size.width - 150, 42)];
+    l1Sub.text = [NSString stringWithFormat:@"Trạng thái: Đang có %lu câu trong hàng đợi mini bar.", (unsigned long)mgr.lyricsLines.count];
+    l1Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+    l1Sub.font = [UIFont systemFontOfSize:12];
+    l1Sub.numberOfLines = 2;
+    [card1 addSubview:l1Sub];
+
+    UIButton *loadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    loadBtn.frame = CGRectMake(card1.bounds.size.width - 120, 36, 108, 36);
+    [loadBtn setTitle:@"📝 Nạp Lời" forState:UIControlStateNormal];
+    [loadBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    loadBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+    loadBtn.layer.cornerRadius = 10.0;
+    loadBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    loadBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [loadBtn addTarget:self action:@selector(openLyricsModal) forControlEvents:UIControlEventTouchUpInside];
+    [card1 addSubview:loadBtn];
+
+    // Card 2: Auto Save to Camera Roll
+    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 162, w - 32, 70)];
+    card2.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
+    card2.layer.cornerRadius = 14.0;
+    card2.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:card2];
+
+    UILabel *l2 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card2.bounds.size.width - 100, 20)];
+    l2.text = @"🎬 Tự Động Lưu Vào Cuộn Camera";
+    l2.textColor = [UIColor whiteColor];
+    l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    [card2 addSubview:l2];
+
+    UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card2.bounds.size.width - 100, 20)];
+    l2Sub.text = @"Tự động lưu video sau khi render xong";
+    l2Sub.textColor = [UIColor lightGrayColor];
+    l2Sub.font = [UIFont systemFontOfSize:11];
+    [card2 addSubview:l2Sub];
+
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 19, 51, 31)];
+    sw.onTintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+    sw.on = AMIsAutoSaveEnabled();
+    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [sw addTarget:self action:@selector(toggleAutoSave:) forControlEvents:UIControlEventValueChanged];
+    [card2 addSubview:sw];
+
+    // Card 3: Pro & Effects Status
+    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 244, w - 32, 80)];
+    card3.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
+    card3.layer.cornerRadius = 14.0;
+    card3.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:card3];
+
+    UILabel *l3 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card3.bounds.size.width - 32, 22)];
+    l3.text = @"👑 Trạng Thái Hệ Thống";
+    l3.textColor = [UIColor whiteColor];
+    l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    [card3 addSubview:l3];
+
+    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng";
+    l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+    l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    l3Sub.numberOfLines = 2;
+    [card3 addSubview:l3Sub];
+
+    // Close Button
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(16, self.view.bounds.size.height - 56, w - 32, 44);
+    [closeBtn setTitle:@"Đóng Cài Đặt" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
+    closeBtn.layer.cornerRadius = 12.0;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    closeBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
+    [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:closeBtn];
+}
+
+- (void)toggleAutoSave:(UISwitch *)sw {
+    AMSetAutoSaveEnabled(sw.on);
+}
+
+- (void)openLyricsModal {
+    AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
+    modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:modal animated:YES completion:nil];
+}
+
+- (void)dismissSelf {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
 #pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar
 
 @interface AMMinimalLyricsBar : UIView
@@ -368,7 +505,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
 
-    // Inner sleek capsule container
     UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 34.0)];
     capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
     capsule.layer.cornerRadius = 17.0;
@@ -380,7 +516,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     CGFloat capW = capsule.bounds.size.width;
 
-    // Previous Chevron [‹]
     UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
     prev.frame = CGRectMake(4.0, 3.0, 28.0, 28.0);
     [prev setTitle:@"‹" forState:UIControlStateNormal];
@@ -392,7 +527,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [capsule addSubview:prev];
     bar.prevBtn = prev;
 
-    // Next Chevron [›]
     UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
     next.frame = CGRectMake(36.0, 3.0, 28.0, 28.0);
     [next setTitle:@"›" forState:UIControlStateNormal];
@@ -404,7 +538,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [capsule addSubview:next];
     bar.nextBtn = next;
 
-    // Close Button [✕]
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.frame = CGRectMake(capW - 32.0, 3.0, 28.0, 28.0);
     [close setTitle:@"✕" forState:UIControlStateNormal];
@@ -417,7 +550,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [capsule addSubview:close];
     bar.closeBtn = close;
 
-    // Load Lyrics Button [📋]
     UIButton *load = [UIButton buttonWithType:UIButtonTypeSystem];
     load.frame = CGRectMake(capW - 64.0, 3.0, 28.0, 28.0);
     [load setTitle:@"📋" forState:UIControlStateNormal];
@@ -429,7 +561,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [capsule addSubview:load];
     bar.loadBtn = load;
 
-    // Center Verse Pill Button [⚡ 1/12: "Lời câu hát..."]
     CGFloat centerStartX = 68.0;
     CGFloat centerW = capW - 68.0 - 68.0;
     UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -501,7 +632,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
             [self.targetVC setValue:line forKey:@"appearText"];
         } @catch (NSException *e) {}
 
-        // Advance to next verse for the next layer
         [mgr consumeNextLineText];
         [self refreshDisplay];
     }
@@ -535,6 +665,104 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         [weakSelf refreshDisplay];
     };
     [self.targetVC presentViewController:modal animated:YES completion:nil];
+}
+
+@end
+
+#pragma mark - Home Screen Floating Settings HUD (CHỈ HIỆN Ở TRANG CHỦ)
+
+@interface AMHomeSettingsHUD : NSObject
+@property (nonatomic, strong) UIButton *floatingButton;
+@property (nonatomic, weak) UIWindow *parentWindow;
++ (instancetype)sharedHUD;
+- (void)installFloatingButtonOnWindow:(UIWindow *)window;
+- (void)setFloatingButtonVisible:(BOOL)visible;
+@end
+
+@implementation AMHomeSettingsHUD
+
++ (instancetype)sharedHUD {
+    static AMHomeSettingsHUD *hud = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        hud = [[self alloc] init];
+    });
+    return hud;
+}
+
+- (void)installFloatingButtonOnWindow:(UIWindow *)window {
+    if (self.floatingButton || !window) return;
+    self.parentWindow = window;
+
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = CGRectMake(16.0, window.bounds.size.height - 140.0, 48.0, 48.0);
+    btn.layer.cornerRadius = 24.0;
+    btn.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.9];
+    btn.layer.borderWidth = 1.5;
+    btn.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.8].CGColor;
+    btn.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
+    btn.layer.shadowOffset = CGSizeMake(0, 4);
+    btn.layer.shadowRadius = 8.0;
+    btn.layer.shadowOpacity = 0.8;
+
+    [btn setTitle:@"⚙️" forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:22.0];
+    [btn addTarget:self action:@selector(floatingButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+    [btn addGestureRecognizer:pan];
+    self.floatingButton = btn;
+
+    [window addSubview:btn];
+    [window bringSubviewToFront:btn];
+}
+
+- (void)setFloatingButtonVisible:(BOOL)visible {
+    if (self.floatingButton) {
+        self.floatingButton.hidden = !visible;
+    }
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    UIView *view = pan.view;
+    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
+    if (!view || !window) return;
+
+    CGPoint translation = [pan translationInView:window];
+    CGPoint center = view.center;
+    center.x += translation.x;
+    center.y += translation.y;
+
+    CGFloat halfW = view.bounds.size.width / 2.0;
+    CGFloat halfH = view.bounds.size.height / 2.0;
+    CGFloat minX = halfW + 8.0;
+    CGFloat maxX = window.bounds.size.width - halfW - 8.0;
+    CGFloat minY = halfH + window.safeAreaInsets.top + 8.0;
+    CGFloat maxY = window.bounds.size.height - halfH - window.safeAreaInsets.bottom - 8.0;
+
+    center.x = MAX(minX, MIN(maxX, center.x));
+    center.y = MAX(minY, MIN(maxY, center.y));
+    view.center = center;
+    [pan setTranslation:CGPointZero inView:window];
+
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        CGFloat snapX = (center.x < window.bounds.size.width / 2.0) ? minX : maxX;
+        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            view.center = CGPointMake(snapX, center.y);
+        } completion:nil];
+    }
+}
+
+- (void)floatingButtonTapped:(UIButton *)sender {
+    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
+    UIViewController *root = window.rootViewController;
+    while (root.presentedViewController) {
+        root = root.presentedViewController;
+    }
+
+    AMHomeSettingsViewController *vc = [[AMHomeSettingsViewController alloc] init];
+    vc.modalPresentationStyle = UIModalPresentationFormSheet;
+    [root presentViewController:vc animated:YES completion:nil];
 }
 
 @end
@@ -582,7 +810,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             NSString *message = alert.message ?: @"";
             NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message].lowercaseString;
 
-            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Nạp Lời"];
+            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Nạp Lời"] || [title containsString:@"Cài Đặt"];
 
             if (!isOurAlert) {
                 if ([combined containsString:@"telegram"] || [combined containsString:@"t.me"] || [combined containsString:@"blatant"] ||
@@ -615,7 +843,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     }
 }
 
-#pragma mark - Hook View Controllers (Auto-Click Save on Export)
+#pragma mark - Hook View Controllers (Auto-Click Save & Manage Home-Only Floating Button)
 
 static void (*orig_UIViewController_viewDidAppear)(UIViewController *, SEL, BOOL);
 
@@ -624,7 +852,23 @@ static void hook_UIViewController_viewDidAppear(UIViewController *self, SEL _cmd
         orig_UIViewController_viewDidAppear(self, _cmd, animated);
     }
 
+    UIWindow *window = self.view.window ?: [UIApplication sharedApplication].windows.firstObject;
+    if (window) {
+        [[AMHomeSettingsHUD sharedHUD] installFloatingButtonOnWindow:window];
+    }
+
     NSString *className = NSStringFromClass([self class]);
+
+    // Show floating button ONLY on Home Screen, hide on Editor / Timeline / Export
+    BOOL isHomeScreen = [className containsString:@"Home"] || [className containsString:@"TabBarController"];
+    BOOL isEditorScreen = [className containsString:@"Edit"] || [className containsString:@"Timeline"] || [className containsString:@"Export"] || [className containsString:@"Inspector"] || [className containsString:@"Shape"];
+
+    if (isEditorScreen) {
+        [[AMHomeSettingsHUD sharedHUD] setFloatingButtonVisible:NO];
+    } else if (isHomeScreen) {
+        [[AMHomeSettingsHUD sharedHUD] setFloatingButtonVisible:YES];
+    }
+
     if ([className containsString:@"ExportPreviewVC"] || [className containsString:@"ExportVC"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([self respondsToSelector:@selector(storeButton)]) {
