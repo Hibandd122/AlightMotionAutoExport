@@ -372,6 +372,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
                 }
             }
         }
+    }
     return count;
 }
 
