@@ -583,7 +583,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar
+#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Rock-Solid Pixel-Perfect Layout)
 
 @interface AMMinimalLyricsBar : UIView
 @property (nonatomic, weak) UIViewController *targetVC;
@@ -601,94 +601,87 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 + (instancetype)barForViewController:(UIViewController *)vc {
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 40.0)];
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
 
-    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 2.0, screenW - 16.0, 36.0)];
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
     capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
     capsule.layer.cornerRadius = 18.0;
     capsule.layer.borderWidth = 1.0;
     capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.35].CGColor;
     capsule.clipsToBounds = YES;
-    capsule.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [bar addSubview:capsule];
     bar.capsule = capsule;
 
-    CGFloat capW = capsule.bounds.size.width;
-
+    // 1. Prev Button [‹]
     UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
-    prev.frame = CGRectMake(4.0, 3.0, 30.0, 30.0);
     [prev setTitle:@"‹" forState:UIControlStateNormal];
     [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
     prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     prev.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    prev.layer.cornerRadius = 15.0;
+    prev.layer.cornerRadius = 14.0;
     [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:prev];
     bar.prevBtn = prev;
 
+    // 2. Next Button [›]
     UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
-    next.frame = CGRectMake(38.0, 3.0, 30.0, 30.0);
     [next setTitle:@"›" forState:UIControlStateNormal];
     [next setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
     next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     next.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    next.layer.cornerRadius = 15.0;
+    next.layer.cornerRadius = 14.0;
     [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:next];
     bar.nextBtn = next;
 
+    // 3. Close Button [✕]
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(capW - 34.0, 3.0, 30.0, 30.0);
     [close setTitle:@"✕" forState:UIControlStateNormal];
     [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
-    close.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
     close.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    close.layer.cornerRadius = 15.0;
-    close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    close.layer.cornerRadius = 14.0;
     [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:close];
     bar.closeBtn = close;
 
+    // 4. Menu Button [📋] (Nạp Lời / Chọn Câu / Xóa)
     UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
-    menu.frame = CGRectMake(capW - 68.0, 3.0, 30.0, 30.0);
     [menu setTitle:@"📋" forState:UIControlStateNormal];
     menu.titleLabel.font = [UIFont systemFontOfSize:14];
     menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    menu.layer.cornerRadius = 15.0;
-    menu.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    menu.layer.cornerRadius = 14.0;
     [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:menu];
     bar.menuBtn = menu;
 
-    CGFloat centerStartX = 72.0;
-    CGFloat centerW = capW - 72.0 - 72.0;
+    // 5. Verse Pill Button [⚡ #1/N: "Lời câu..."]
     UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
-    verse.frame = CGRectMake(centerStartX, 3.0, centerW, 30.0);
     verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.18];
-    verse.layer.cornerRadius = 15.0;
+    verse.layer.cornerRadius = 14.0;
     verse.layer.borderWidth = 0.8;
     verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
     [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     verse.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     verse.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     verse.contentEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 8);
-    verse.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [verse addTarget:bar action:@selector(verseTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:verse];
     bar.versePillBtn = verse;
 
+    [bar setNeedsLayout];
     [bar refreshDisplay];
     return bar;
 }
 
 - (CGSize)intrinsicContentSize {
-    return CGSizeMake(UIViewNoIntrinsicMetric, 40.0);
+    return CGSizeMake(UIViewNoIntrinsicMetric, 42.0);
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
-    return CGSizeMake(size.width, 40.0);
+    return CGSizeMake(size.width, 42.0);
 }
 
 - (void)layoutSubviews {
@@ -697,19 +690,51 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     CGFloat w = self.bounds.size.width;
     CGFloat padLeft = MAX(8.0, insets.left);
     CGFloat padRight = MAX(8.0, insets.right);
-    self.capsule.frame = CGRectMake(padLeft, 2.0, w - padLeft - padRight, 36.0);
+    
+    CGFloat capW = w - padLeft - padRight;
+    if (capW < 100.0) capW = [UIScreen mainScreen].bounds.size.width - 16.0;
+    
+    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 36.0);
+
+    CGFloat btnH = 28.0;
+    CGFloat btnY = 4.0;
+
+    self.prevBtn.frame = CGRectMake(4.0, btnY, 28.0, btnH);
+    self.nextBtn.frame = CGRectMake(36.0, btnY, 28.0, btnH);
+
+    self.closeBtn.frame = CGRectMake(capW - 32.0, btnY, 28.0, btnH);
+    self.menuBtn.frame = CGRectMake(capW - 64.0, btnY, 28.0, btnH);
+
+    CGFloat centerStartX = 68.0;
+    CGFloat centerW = capW - 68.0 - 68.0;
+    if (centerW < 60.0) centerW = 60.0;
+    self.versePillBtn.frame = CGRectMake(centerStartX, btnY, centerW, btnH);
 }
 
 - (void)refreshDisplay {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    
+    // Always keep all buttons visible!
+    self.prevBtn.hidden = NO;
+    self.nextBtn.hidden = NO;
+    self.menuBtn.hidden = NO;
+    self.closeBtn.hidden = NO;
+    self.versePillBtn.hidden = NO;
+
     if (mgr.lyricsLines.count == 0) {
-        self.prevBtn.hidden = YES;
-        self.nextBtn.hidden = YES;
+        self.prevBtn.enabled = NO;
+        self.prevBtn.alpha = 0.35;
+        self.nextBtn.enabled = NO;
+        self.nextBtn.alpha = 0.35;
         [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
         [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
     } else {
-        self.prevBtn.hidden = (mgr.currentIndex == 0);
-        self.nextBtn.hidden = (mgr.currentIndex + 1 >= mgr.lyricsLines.count);
+        self.prevBtn.enabled = (mgr.currentIndex > 0);
+        self.prevBtn.alpha = (mgr.currentIndex > 0) ? 1.0 : 0.4;
+
+        self.nextBtn.enabled = (mgr.currentIndex + 1 < mgr.lyricsLines.count);
+        self.nextBtn.alpha = (mgr.currentIndex + 1 < mgr.lyricsLines.count) ? 1.0 : 0.4;
+
         NSUInteger cur = mgr.currentIndex + 1;
         NSString *line = [mgr currentLineText] ?: @"";
         NSString *title = [NSString stringWithFormat:@"⚡ %lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
@@ -943,7 +968,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Hook TextInputVC (Install Sleek Minimalist Accessory Bar Safely)
+#pragma mark - Hook TextInputVC & UITextView (Seamless Automatic Accessory Bar Binding)
 
 static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
 
@@ -969,6 +994,30 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
         AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:self];
         tv.inputAccessoryView = bar;
     }
+}
+
+static BOOL (*orig_UITextView_becomeFirstResponder)(UITextView *, SEL);
+
+static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
+    if (self.inputAccessoryView == nil) {
+        UIResponder *responder = self;
+        while ((responder = [responder nextResponder])) {
+            if ([responder isKindOfClass:[UIViewController class]]) {
+                break;
+            }
+        }
+        if (responder) {
+            NSString *vcName = NSStringFromClass([responder class]);
+            if ([vcName containsString:@"TextInput"] || [vcName containsString:@"Edit"] || [vcName containsString:@"Text"]) {
+                AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:(UIViewController *)responder];
+                self.inputAccessoryView = bar;
+            }
+        }
+    }
+    if (orig_UITextView_becomeFirstResponder) {
+        return orig_UITextView_becomeFirstResponder(self, _cmd);
+    }
+    return YES;
 }
 
 #pragma mark - 6-Layer Bulletproof Anti-Telegram, Anti-Ads & 10s Vibration Annihilator
@@ -1036,7 +1085,8 @@ static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
         [clsName containsString:@"TextEffects"] || 
         [clsName containsString:@"InputSet"] ||
         [clsName containsString:@"Remote"] ||
-        [clsName containsString:@"Interactive"]) {
+        [clsName containsString:@"Interactive"] ||
+        [clsName isEqualToString:@"UIWindow"]) {
         if (orig_UIWindow_makeKeyAndVisible) {
             orig_UIWindow_makeKeyAndVisible(self, _cmd);
         }
@@ -1044,7 +1094,6 @@ static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
     }
 
     if (self.windowLevel >= UIWindowLevelAlert) {
-        // Inspect rootViewController / views to ensure it's crack overlay
         UIViewController *root = self.rootViewController;
         NSString *rootName = root ? NSStringFromClass([root class]) : @"";
         if ([rootName containsString:@"5qG"] || [rootName containsString:@"fQG"] || [rootName containsString:@"Blatant"] || [rootName containsString:@"Alert"]) {
@@ -1067,7 +1116,8 @@ static void hook_UIWindow_setHidden(UIWindow *self, SEL _cmd, BOOL hidden) {
         [clsName containsString:@"TextEffects"] || 
         [clsName containsString:@"InputSet"] ||
         [clsName containsString:@"Remote"] ||
-        [clsName containsString:@"Interactive"]) {
+        [clsName containsString:@"Interactive"] ||
+        [clsName isEqualToString:@"UIWindow"]) {
         if (orig_UIWindow_setHidden) {
             orig_UIWindow_setHidden(self, _cmd, hidden);
         }
@@ -1302,13 +1352,22 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
     }
 
-    // 8. Hook TextInputVC
+    // 8. Hook TextInputVC & UITextView
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
             method_setImplementation(textAppearMethod, (IMP)hook_TextInputVC_viewDidAppear);
+        }
+    }
+
+    Class tvClass = [UITextView class];
+    if (tvClass) {
+        Method becomeMethod = class_getInstanceMethod(tvClass, @selector(becomeFirstResponder));
+        if (becomeMethod) {
+            orig_UITextView_becomeFirstResponder = (void *)method_getImplementation(becomeMethod);
+            method_setImplementation(becomeMethod, (IMP)hook_UITextView_becomeFirstResponder);
         }
     }
 }
