@@ -105,7 +105,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         mgr = [[self alloc] init];
         mgr.lyricsLines = [NSMutableArray array];
         
-        // Restore from disk cache
         NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_CachedLyrics"];
         if (cached && [cached isKindOfClass:[NSArray class]]) {
             [mgr.lyricsLines addObjectsFromArray:cached];
@@ -681,9 +680,14 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         self.nextBtn.hidden = YES;
         [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
         [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    } else if (mgr.currentIndex >= mgr.lyricsLines.count) {
+        self.prevBtn.hidden = NO;
+        self.nextBtn.hidden = YES;
+        [self.versePillBtn setTitle:@"🎉 Đã Điền Hết Lời (Chạm Để Lặp Lại)" forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
     } else {
         self.prevBtn.hidden = NO;
-        self.nextBtn.hidden = NO;
+        self.nextBtn.hidden = (mgr.currentIndex + 1 >= mgr.lyricsLines.count);
         NSUInteger cur = mgr.currentIndex + 1;
         NSString *line = [mgr currentLineText] ?: @"";
         NSString *title = [NSString stringWithFormat:@"⚡ %lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
@@ -696,6 +700,13 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count == 0) {
         [self loadTapped];
+        return;
+    }
+
+    if (mgr.currentIndex >= mgr.lyricsLines.count) {
+        [mgr resetToFirstVerse];
+        [self refreshDisplay];
+        AudioServicesPlaySystemSound(1519);
         return;
     }
 
@@ -774,6 +785,10 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
             [self refreshDisplay];
         }]];
 
+        [sheet addAction:[UIAlertAction actionWithTitle:@"🎯 Chọn Câu Cụ Thể Trong Danh Sách" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [self openVersePicker];
+        }]];
+
         [sheet addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Sạch Hàng Đợi" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
             [mgr clearLyrics];
             [self refreshDisplay];
@@ -783,6 +798,24 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [sheet addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
 
     [self.targetVC presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)openVersePicker {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Chọn Câu Hát Bắt Đầu"
+                                                                    message:nil
+                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+
+    for (NSUInteger i = 0; i < mgr.lyricsLines.count && i < 25; i++) {
+        NSString *verseTitle = [NSString stringWithFormat:@"#%lu: \"%@\"", (unsigned long)(i + 1), mgr.lyricsLines[i]];
+        [picker addAction:[UIAlertAction actionWithTitle:verseTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [mgr jumpToVerseIndex:i];
+            [self refreshDisplay];
+        }]];
+    }
+
+    [picker addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+    [self.targetVC presentViewController:picker animated:YES completion:nil];
 }
 
 - (void)loadTapped {
@@ -990,7 +1023,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             NSString *message = alert.message ?: @"";
             NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message];
 
-            BOOL isOurAlert = [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Lyrics"] || [title containsString:@"Cài Đặt"] || [title containsString:@"Quản Lý Lời"];
+            BOOL isOurAlert = [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Lyrics"] || [title containsString:@"Cài Đặt"] || [title containsString:@"Quản Lý Lời"] || [title containsString:@"Chọn Câu"];
 
             if (!isOurAlert && AMIsForbiddenString(combined)) {
                 if (completion) completion();
