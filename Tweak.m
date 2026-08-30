@@ -70,63 +70,92 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 #pragma mark - Batch Lyrics Inserter Controller & Engine
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
+@property (nonatomic, strong) UIView *containerCard;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, strong) UILabel *lineCountLabel;
-@property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *pasteButton;
+@property (nonatomic, strong) UIButton *dismissKeyboardButton;
 @property (nonatomic, strong) UIButton *applyButton;
 @property (nonatomic, strong) UIButton *closeButton;
 @property (nonatomic, weak) UIViewController *parentPresenter;
+@property (nonatomic, strong) NSLayoutConstraint *containerBottomConstraint;
 @end
 
 @implementation AMBatchLyricsViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.96];
-    self.view.layer.cornerRadius = 20.0;
-    self.view.clipsToBounds = YES;
+    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.07 blue:0.10 alpha:0.98];
+
+    // Tap outside background to dismiss keyboard
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
+    tap.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:tap];
 
     [self setupHeader];
     [self setupTextView];
     [self setupButtons];
+
+    // Register keyboard notifications
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)setupHeader {
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, self.view.bounds.size.width - 40, 28)];
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
     titleLabel.text = @"📝 Tự Động Điền Lời Bài Hát (Batch Lyrics)";
     titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:titleLabel];
 
-    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 50, self.view.bounds.size.width - 40, 36)];
-    subtitleLabel.text = @"Dán danh sách câu hát (mỗi dòng 1 câu). Hệ thống sẽ tự động điền lần lượt vào các Text Layer trên Timeline theo thứ tự.";
+    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
+    subtitleLabel.text = @"Mỗi dòng là 1 câu hát. Tweak sẽ tự động điền lần lượt vào từng Text Layer trên Timeline theo thứ tự.";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
-    subtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+    subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
     subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:subtitleLabel];
 }
 
 - (void)setupTextView {
-    CGFloat yPos = 95;
-    CGFloat h = self.view.bounds.size.height - yPos - 120;
-    if (h < 180) h = 180;
+    CGFloat yPos = 82;
+    CGFloat bottomMargin = 110;
+    CGFloat h = self.view.bounds.size.height - yPos - bottomMargin;
+    if (h < 150) h = 150;
 
-    self.textView = [[UITextView alloc] initWithFrame:CGRectMake(20, yPos, self.view.bounds.size.width - 40, h)];
-    self.textView.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    self.textView = [[UITextView alloc] initWithFrame:CGRectMake(16, yPos, self.view.bounds.size.width - 32, h)];
+    self.textView.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
     self.textView.textColor = [UIColor whiteColor];
     self.textView.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     self.textView.layer.cornerRadius = 12.0;
-    self.textView.layer.borderWidth = 1.0;
-    self.textView.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.4].CGColor;
+    self.textView.layer.borderWidth = 1.2;
+    self.textView.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
     self.textView.delegate = self;
     self.textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+
+    // Setup inputAccessoryView (Toolbar on top of iOS keyboard)
+    UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
+    toolbar.barStyle = UIBarStyleBlack;
+    toolbar.translucent = YES;
+    toolbar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+
+    UIBarButtonItem *pasteItem = [[UIBarButtonItem alloc] initWithTitle:@"📋 Dán Nhanh" style:UIBarButtonItemStylePlain target:self action:@selector(pasteFromClipboard)];
+    UIBarButtonItem *clearItem = [[UIBarButtonItem alloc] initWithTitle:@"🧹 Xóa" style:UIBarButtonItemStylePlain target:self action:@selector(clearText)];
+    UIBarButtonItem *flexSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Ẩn Bàn Phím" style:UIBarButtonItemStyleDone target:self action:@selector(dismissKeyboard)];
+
+    [toolbar setItems:@[pasteItem, clearItem, flexSpace, doneItem]];
+    self.textView.inputAccessoryView = toolbar;
+
     [self.view addSubview:self.textView];
 
-    self.lineCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, yPos + h + 8, self.view.bounds.size.width - 48, 20)];
-    self.lineCountLabel.text = @"📊 Số dòng: 0 câu hát";
+    self.lineCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yPos + h + 6, self.view.bounds.size.width - 40, 20)];
+    self.lineCountLabel.text = @"📊 Số dòng: 0 câu hát đã nhập";
     self.lineCountLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.lineCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     self.lineCountLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
@@ -134,41 +163,89 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)setupButtons {
-    CGFloat bottomY = self.view.bounds.size.height - 60;
+    CGFloat bottomY = self.view.bounds.size.height - 54;
     CGFloat width = self.view.bounds.size.width;
 
     // Paste Button
     self.pasteButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.pasteButton.frame = CGRectMake(20, bottomY, 100, 42);
+    self.pasteButton.frame = CGRectMake(16, bottomY, 80, 42);
     [self.pasteButton setTitle:@"📋 Dán" forState:UIControlStateNormal];
     [self.pasteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.pasteButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
     self.pasteButton.layer.cornerRadius = 10.0;
-    self.pasteButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    self.pasteButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     [self.pasteButton addTarget:self action:@selector(pasteFromClipboard) forControlEvents:UIControlEventTouchUpInside];
     self.pasteButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.pasteButton];
 
+    // Hide Keyboard Button
+    self.dismissKeyboardButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.dismissKeyboardButton.frame = CGRectMake(102, bottomY, 80, 42);
+    [self.dismissKeyboardButton setTitle:@"⌨️ Ẩn phím" forState:UIControlStateNormal];
+    [self.dismissKeyboardButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.dismissKeyboardButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
+    self.dismissKeyboardButton.layer.cornerRadius = 10.0;
+    self.dismissKeyboardButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    [self.dismissKeyboardButton addTarget:self action:@selector(dismissKeyboard) forControlEvents:UIControlEventTouchUpInside];
+    self.dismissKeyboardButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:self.dismissKeyboardButton];
+
     // Apply Button
+    CGFloat applyX = 188;
+    CGFloat applyW = width - applyX - 70;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.applyButton.frame = CGRectMake(130, bottomY, width - 130 - 80, 42);
-    [self.applyButton setTitle:@"⚡ Áp Dụng Ngay" forState:UIControlStateNormal];
+    self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
+    [self.applyButton setTitle:@"⚡ Áp Dụng" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.applyButton.layer.cornerRadius = 10.0;
-    self.applyButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
+    self.applyButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [self.applyButton addTarget:self action:@selector(applyLyricsToTimeline) forControlEvents:UIControlEventTouchUpInside];
     self.applyButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.applyButton];
 
     // Close Button
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.closeButton.frame = CGRectMake(width - 70, bottomY, 50, 42);
+    self.closeButton.frame = CGRectMake(width - 64, bottomY, 50, 42);
     [self.closeButton setTitle:@"Đóng" forState:UIControlStateNormal];
     [self.closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
     [self.closeButton addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
     self.closeButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin;
     [self.view addSubview:self.closeButton];
+}
+
+- (void)dismissKeyboard {
+    [self.view endEditing:YES];
+}
+
+- (void)clearText {
+    self.textView.text = @"";
+    [self updateLineCount];
+}
+
+- (void)keyboardWillShow:(NSNotification *)notification {
+    NSDictionary *userInfo = notification.userInfo;
+    CGRect keyboardFrame = [userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGFloat keyboardHeight = keyboardFrame.size.height;
+    double duration = [userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+
+    [UIView animateWithDuration:duration animations:^{
+        CGRect frame = self.textView.frame;
+        frame.size.height = self.view.bounds.size.height - 82 - keyboardHeight - 10;
+        if (frame.size.height < 100) frame.size.height = 100;
+        self.textView.frame = frame;
+    }];
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    NSDictionary *userInfo = notification.userInfo;
+    double duration = [userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+
+    [UIView animateWithDuration:duration animations:^{
+        CGRect frame = self.textView.frame;
+        frame.size.height = self.view.bounds.size.height - 82 - 110;
+        self.textView.frame = frame;
+    }];
 }
 
 - (void)textViewDidChange:(UITextView *)textView {
@@ -202,10 +279,12 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)dismissModal {
+    [self.view endEditing:YES];
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (void)applyLyricsToTimeline {
+    [self.view endEditing:YES];
     NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
     if (lines.count == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Thông báo"
