@@ -81,7 +81,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Lyrics Queue Manager (With Persistent Disk Storage)
+#pragma mark - Lyrics Queue Manager (With Async Non-Blocking Disk Persistence)
 
 @interface AMLyricsQueueManager : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
@@ -118,9 +118,13 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)saveToDisk {
-    [[NSUserDefaults standardUserDefaults] setObject:self.lyricsLines forKey:@"AM_CachedLyrics"];
-    [[NSUserDefaults standardUserDefaults] setInteger:self.currentIndex forKey:@"AM_CachedLyricsIndex"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    NSArray *linesCopy = [self.lyricsLines copy];
+    NSUInteger indexCopy = self.currentIndex;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+        [[NSUserDefaults standardUserDefaults] setObject:linesCopy forKey:@"AM_CachedLyrics"];
+        [[NSUserDefaults standardUserDefaults] setInteger:indexCopy forKey:@"AM_CachedLyricsIndex"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    });
 }
 
 - (void)loadLyrics:(NSArray<NSString *> *)lines {
@@ -173,7 +177,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Batch Lyrics Inserter Modal View Controller
+#pragma mark - Batch Lyrics Inserter Modal View Controller (With Smart LRC Cleaner)
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
 @property (nonatomic, strong) UITextView *textView;
@@ -222,7 +226,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Dán lời bài hát (mỗi dòng 1 câu). Lưu hàng đợi mới hoặc xóa sạch hàng đợi bất cứ lúc nào.";
+    subtitleLabel.text = @"Dán lời bài hát (mỗi dòng 1 câu - tự động lọc sạch timestamp LRC). Lưu hàng đợi hoặc xóa bất cứ lúc nào.";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -358,10 +362,24 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     if (!rawText || rawText.length == 0) return @[];
     NSArray *all = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
     NSMutableArray *valid = [NSMutableArray array];
+    
+    // Auto-strip LRC timestamps like [00:12.34], [01:23], [00:12:34]
+    static NSRegularExpression *lrcRegex = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        lrcRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\[\\d{1,2}:\\d{2}(?:[\\.:]\\d{1,3})?\\]\\s*" options:0 error:nil];
+    });
+
     for (NSString *s in all) {
         NSString *trimmed = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (trimmed.length > 0) {
-            [valid addObject:trimmed];
+            if (lrcRegex) {
+                trimmed = [lrcRegex stringByReplacingMatchesInString:trimmed options:0 range:NSMakeRange(0, trimmed.length) withTemplate:@""];
+                trimmed = [trimmed stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            }
+            if (trimmed.length > 0) {
+                [valid addObject:trimmed];
+            }
         }
     }
     return valid;
