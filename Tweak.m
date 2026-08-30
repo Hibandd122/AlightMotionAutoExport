@@ -36,7 +36,6 @@ static void AMAutoSaveVideoAtPath(NSString *filePath) {
     UISaveVideoAtPathToSavedPhotosAlbum(filePath, nil, NULL, NULL);
     AMNotifyUser(@"Alight Motion Pro", @"Video đã được tự động lưu vào Cuộn Camera (Photos) thành công!");
 
-    // Debounce for 5 seconds
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         hasSavedRecentVideo = NO;
     });
@@ -148,7 +147,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self setupTextView];
     [self setupButtons];
 
-    // Preload existing text if available
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count > 0) {
         self.textView.text = [mgr.lyricsLines componentsJoinedByString:@"\n"];
@@ -165,14 +163,14 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)setupHeader {
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
-    titleLabel.text = @"📝 Nạp Lời Bài Hát (Batch Lyrics)";
+    titleLabel.text = @"📝 Nạp Lời Bài Hát (Lyrics)";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Dán danh sách câu hát (mỗi dòng 1 câu). Khi chỉnh sửa text layer, thanh công cụ sẽ tự động xuất hiện nút [⚡ Điền Câu].";
+    subtitleLabel.text = @"Dán danh sách câu hát (mỗi dòng 1 câu). Thanh công cụ mini trên bàn phím sẽ hiển thị câu tiếp theo.";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -195,20 +193,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.textView.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
     self.textView.delegate = self;
     self.textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-
-    UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
-    toolbar.barStyle = UIBarStyleBlack;
-    toolbar.translucent = YES;
-    toolbar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-
-    UIBarButtonItem *pasteItem = [[UIBarButtonItem alloc] initWithTitle:@"📋 Dán Nhanh" style:UIBarButtonItemStylePlain target:self action:@selector(pasteFromClipboard)];
-    UIBarButtonItem *clearItem = [[UIBarButtonItem alloc] initWithTitle:@"🧹 Xóa" style:UIBarButtonItemStylePlain target:self action:@selector(clearText)];
-    UIBarButtonItem *flexSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-    UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Ẩn Bàn Phím" style:UIBarButtonItemStyleDone target:self action:@selector(dismissKeyboard)];
-
-    [toolbar setItems:@[pasteItem, clearItem, flexSpace, doneItem]];
-    self.textView.inputAccessoryView = toolbar;
-
     [self.view addSubview:self.textView];
 
     self.lineCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yPos + h + 6, self.view.bounds.size.width - 40, 20)];
@@ -363,77 +347,144 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Hook TextInputVC (Integrated Toolbar: [⏪] [⏩] [⚡ Điền Câu #X/N] [📋 Nạp Lời] [✅ Xong])
+#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar
 
-static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+@interface AMMinimalLyricsBar : UIView
+@property (nonatomic, weak) UIViewController *targetVC;
+@property (nonatomic, strong) UIButton *prevBtn;
+@property (nonatomic, strong) UIButton *nextBtn;
+@property (nonatomic, strong) UIButton *versePillBtn;
+@property (nonatomic, strong) UIButton *loadBtn;
+@property (nonatomic, strong) UIButton *closeBtn;
++ (instancetype)barForViewController:(UIViewController *)vc;
+- (void)refreshDisplay;
+@end
 
-static void am_refreshToolbarForTextInputVC(UIViewController *vc);
+@implementation AMMinimalLyricsBar
 
-static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
-    if (orig_TextInputVC_viewDidAppear) {
-        orig_TextInputVC_viewDidAppear(self, _cmd, animated);
-    }
-    am_refreshToolbarForTextInputVC(self);
++ (instancetype)barForViewController:(UIViewController *)vc {
+    CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 40.0)];
+    bar.targetVC = vc;
+    bar.backgroundColor = [UIColor clearColor];
+
+    // Inner sleek capsule container
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 34.0)];
+    capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
+    capsule.layer.cornerRadius = 17.0;
+    capsule.layer.borderWidth = 1.0;
+    capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.35].CGColor;
+    capsule.clipsToBounds = YES;
+    capsule.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [bar addSubview:capsule];
+
+    CGFloat capW = capsule.bounds.size.width;
+
+    // Previous Chevron [‹]
+    UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
+    prev.frame = CGRectMake(4.0, 3.0, 28.0, 28.0);
+    [prev setTitle:@"‹" forState:UIControlStateNormal];
+    [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    prev.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    prev.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    prev.layer.cornerRadius = 14.0;
+    [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:prev];
+    bar.prevBtn = prev;
+
+    // Next Chevron [›]
+    UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
+    next.frame = CGRectMake(36.0, 3.0, 28.0, 28.0);
+    [next setTitle:@"›" forState:UIControlStateNormal];
+    [next setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    next.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    next.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    next.layer.cornerRadius = 14.0;
+    [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:next];
+    bar.nextBtn = next;
+
+    // Close Button [✕]
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(capW - 32.0, 3.0, 28.0, 28.0);
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    close.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    close.layer.cornerRadius = 14.0;
+    close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:close];
+    bar.closeBtn = close;
+
+    // Load Lyrics Button [📋]
+    UIButton *load = [UIButton buttonWithType:UIButtonTypeSystem];
+    load.frame = CGRectMake(capW - 64.0, 3.0, 28.0, 28.0);
+    [load setTitle:@"📋" forState:UIControlStateNormal];
+    load.titleLabel.font = [UIFont systemFontOfSize:14];
+    load.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    load.layer.cornerRadius = 14.0;
+    load.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [load addTarget:bar action:@selector(loadTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:load];
+    bar.loadBtn = load;
+
+    // Center Verse Pill Button [⚡ 1/12: "Lời câu hát..."]
+    CGFloat centerStartX = 68.0;
+    CGFloat centerW = capW - 68.0 - 68.0;
+    UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
+    verse.frame = CGRectMake(centerStartX, 3.0, centerW, 28.0);
+    verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.18];
+    verse.layer.cornerRadius = 14.0;
+    verse.layer.borderWidth = 0.8;
+    verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
+    [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    verse.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    verse.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    verse.contentEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 8);
+    verse.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [verse addTarget:bar action:@selector(verseTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:verse];
+    bar.versePillBtn = verse;
+
+    [bar refreshDisplay];
+    return bar;
 }
 
-static void am_refreshToolbarForTextInputVC(UIViewController *self) {
-    UITextView *tv = nil;
-    if ([self respondsToSelector:@selector(inputTextView)]) {
-        tv = [self valueForKey:@"inputTextView"];
-    }
-    if (!tv) {
-        for (UIView *sub in self.view.subviews) {
-            if ([sub isKindOfClass:[UITextView class]]) {
-                tv = (UITextView *)sub;
-                break;
-            }
-        }
-    }
-
-    if (tv) {
-        AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-
-        UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
-        bar.barStyle = UIBarStyleBlack;
-        bar.translucent = YES;
-        bar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-
-        NSMutableArray *items = [NSMutableArray array];
-
-        if (mgr.lyricsLines.count > 0) {
-            UIBarButtonItem *prevItem = [[UIBarButtonItem alloc] initWithTitle:@"⏪" style:UIBarButtonItemStylePlain target:self action:@selector(am_prevVerse)];
-            UIBarButtonItem *nextItem = [[UIBarButtonItem alloc] initWithTitle:@"⏩" style:UIBarButtonItemStylePlain target:self action:@selector(am_nextVerse)];
-
-            NSUInteger curIdx = mgr.currentIndex + 1;
-            NSString *btnTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curIdx, (unsigned long)mgr.lyricsLines.count];
-            UIBarButtonItem *fillItem = [[UIBarButtonItem alloc] initWithTitle:btnTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_fillCurrentVerse)];
-
-            [items addObjectsFromArray:@[prevItem, nextItem, fillItem]];
-        }
-
-        UIBarButtonItem *loadLyricsItem = [[UIBarButtonItem alloc] initWithTitle:@"📋 Nạp Lời" style:UIBarButtonItemStylePlain target:self action:@selector(am_openLyricsModal)];
-        UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-        UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Xong" style:UIBarButtonItemStylePlain target:self action:@selector(am_dismissKeyboard)];
-
-        [items addObjectsFromArray:@[flex, loadLyricsItem, doneItem]];
-
-        [bar setItems:items];
-        tv.inputAccessoryView = bar;
-        [tv reloadInputViews];
-    }
-}
-
-static void am_fillCurrentVerse(UIViewController *self, SEL _cmd) {
+- (void)refreshDisplay {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) {
+        self.prevBtn.hidden = YES;
+        self.nextBtn.hidden = YES;
+        [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    } else {
+        self.prevBtn.hidden = NO;
+        self.nextBtn.hidden = NO;
+        NSUInteger cur = mgr.currentIndex + 1;
+        NSString *line = [mgr currentLineText] ?: @"";
+        NSString *title = [NSString stringWithFormat:@"⚡ %lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
+        [self.versePillBtn setTitle:title forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    }
+}
+
+- (void)verseTapped {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) {
+        [self loadTapped];
+        return;
+    }
+
     NSString *line = [mgr currentLineText];
     if (!line) return;
 
     UITextView *tv = nil;
-    if ([self respondsToSelector:@selector(inputTextView)]) {
-        tv = [self valueForKey:@"inputTextView"];
+    if ([self.targetVC respondsToSelector:@selector(inputTextView)]) {
+        tv = [self.targetVC valueForKey:@"inputTextView"];
     }
     if (!tv) {
-        for (UIView *sub in self.view.subviews) {
+        for (UIView *sub in self.targetVC.view.subviews) {
             if ([sub isKindOfClass:[UITextView class]]) {
                 tv = (UITextView *)sub;
                 break;
@@ -447,44 +498,74 @@ static void am_fillCurrentVerse(UIViewController *self, SEL _cmd) {
             [tv.delegate textViewDidChange:tv];
         }
         @try {
-            [self setValue:line forKey:@"appearText"];
+            [self.targetVC setValue:line forKey:@"appearText"];
         } @catch (NSException *e) {}
 
-        // Advance to next verse for next layer
+        // Advance to next verse for the next layer
         [mgr consumeNextLineText];
-
-        // Refresh bar
-        am_refreshToolbarForTextInputVC(self);
+        [self refreshDisplay];
     }
 }
 
-static void am_prevVerse(UIViewController *self, SEL _cmd) {
+- (void)prevTapped {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.currentIndex > 0) {
         mgr.currentIndex--;
     }
-    am_refreshToolbarForTextInputVC(self);
+    [self refreshDisplay];
 }
 
-static void am_nextVerse(UIViewController *self, SEL _cmd) {
+- (void)nextTapped {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
         mgr.currentIndex++;
     }
-    am_refreshToolbarForTextInputVC(self);
+    [self refreshDisplay];
 }
 
-static void am_dismissKeyboard(UIViewController *self, SEL _cmd) {
-    [self.view endEditing:YES];
+- (void)closeTapped {
+    [self.targetVC.view endEditing:YES];
 }
 
-static void am_openLyricsModal(UIViewController *self, SEL _cmd) {
+- (void)loadTapped {
     AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
     modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    __weak typeof(self) weakSelf = self;
     modal.onLyricsLoaded = ^{
-        am_refreshToolbarForTextInputVC(self);
+        [weakSelf refreshDisplay];
     };
-    [self presentViewController:modal animated:YES completion:nil];
+    [self.targetVC presentViewController:modal animated:YES completion:nil];
+}
+
+@end
+
+#pragma mark - Hook TextInputVC (Install Sleek Minimalist Accessory Bar)
+
+static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+
+static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    if (orig_TextInputVC_viewDidAppear) {
+        orig_TextInputVC_viewDidAppear(self, _cmd, animated);
+    }
+
+    UITextView *tv = nil;
+    if ([self respondsToSelector:@selector(inputTextView)]) {
+        tv = [self valueForKey:@"inputTextView"];
+    }
+    if (!tv) {
+        for (UIView *sub in self.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:self];
+        tv.inputAccessoryView = bar;
+        [tv reloadInputViews];
+    }
 }
 
 #pragma mark - Hook Present View Controller (Block Ads, Crack Notices & Promos)
@@ -595,12 +676,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
 
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
-        class_addMethod(textInputClass, @selector(am_fillCurrentVerse), (IMP)am_fillCurrentVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_prevVerse), (IMP)am_prevVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_nextVerse), (IMP)am_nextVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_dismissKeyboard), (IMP)am_dismissKeyboard, "v@:");
-        class_addMethod(textInputClass, @selector(am_openLyricsModal), (IMP)am_openLyricsModal, "v@:");
-
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
