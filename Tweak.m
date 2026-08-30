@@ -351,17 +351,9 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
             NSError *err = nil;
             NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:&err];
             if (content && [content containsString:@"com.alightcreative.motion.text"]) {
-                // Regex replace text in shapes
                 NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"<property name=\"text\" value=\"([^\"]*)\""
                                                                                        options:0
                                                                                          error:nil];
-                __block NSUInteger lineIdx = 0;
-                NSString *replaced = [regex stringByReplacingMatchesInString:content
-                                                                     options:0
-                                                                       range:NSMakeRange(0, content.length)
-                                                                withTemplate:[NSString stringWithFormat:@"<property name=\"text\" value=\"$1\""]];
-                
-                // Sequential replace
                 NSArray *matches = [regex matchesInString:content options:0 range:NSMakeRange(0, content.length)];
                 if (matches.count > 0) {
                     NSMutableString *mutableContent = [content mutableCopy];
@@ -380,7 +372,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
                 }
             }
         }
-    }
     return count;
 }
 
