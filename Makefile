@@ -6,8 +6,8 @@ TARGET = iphone:clang:14.5:14.0
 include $(THEOS)/makefiles/common.mk
 
 LIBRARY_NAME = AlightMotionAutoExport
-AlightMotionAutoExport_FILES = Tweak.m
+AlightMotionAutoExport_FILES = Tweak.m fishhook.c
 AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function
-AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore
+AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore AudioToolbox
 
 include $(THEOS_MAKE_PATH)/library.mk

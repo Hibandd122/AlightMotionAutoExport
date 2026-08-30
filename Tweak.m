@@ -3,6 +3,7 @@
 #import <UserNotifications/UserNotifications.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/runtime.h>
+#import "fishhook.h"
 
 #pragma mark - Notification Helper
 
@@ -365,7 +366,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     NSArray *all = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
     NSMutableArray *valid = [NSMutableArray array];
     
-    // Auto-strip LRC timestamps like [00:12.34], [01:23], [00:12:34]
     static NSRegularExpression *lrcRegex = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -528,7 +528,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [card3 addSubview:l3];
 
     UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
-    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Timer 10s quảng cáo";
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Rung Chuông 10s quảng cáo";
     l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
     l3Sub.numberOfLines = 3;
@@ -601,12 +601,11 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 + (instancetype)barForViewController:(UIViewController *)vc {
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 40.0)];
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
-    bar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 
-    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 2.0, screenW - 16.0, 36.0)];
     capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
     capsule.layer.cornerRadius = 18.0;
     capsule.layer.borderWidth = 1.0;
@@ -684,13 +683,21 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return bar;
 }
 
+- (CGSize)intrinsicContentSize {
+    return CGSizeMake(UIViewNoIntrinsicMetric, 40.0);
+}
+
+- (CGSize)sizeThatFits:(CGSize)size {
+    return CGSizeMake(size.width, 40.0);
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     UIEdgeInsets insets = self.safeAreaInsets;
     CGFloat w = self.bounds.size.width;
     CGFloat padLeft = MAX(8.0, insets.left);
     CGFloat padRight = MAX(8.0, insets.right);
-    self.capsule.frame = CGRectMake(padLeft, 3.0, w - padLeft - padRight, 36.0);
+    self.capsule.frame = CGRectMake(padLeft, 2.0, w - padLeft - padRight, 36.0);
 }
 
 - (void)refreshDisplay {
@@ -936,7 +943,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Hook TextInputVC (Install Sleek Minimalist Accessory Bar)
+#pragma mark - Hook TextInputVC (Install Sleek Minimalist Accessory Bar Safely)
 
 static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
 
@@ -958,14 +965,13 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
         }
     }
 
-    if (tv) {
+    if (tv && tv.inputAccessoryView == nil) {
         AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:self];
         tv.inputAccessoryView = bar;
-        [tv reloadInputViews];
     }
 }
 
-#pragma mark - 6-Layer Bulletproof Anti-Telegram, Anti-Ads & 10s Timer Annihilator
+#pragma mark - 6-Layer Bulletproof Anti-Telegram, Anti-Ads & 10s Vibration Annihilator
 
 static BOOL AMIsForbiddenString(NSString *str) {
     if (!str || str.length == 0) return NO;
@@ -978,12 +984,38 @@ static BOOL AMIsForbiddenString(NSString *str) {
            [low containsString:@"crack"] ||
            [low containsString:@"unlocked by"] ||
            [low containsString:@"quảng cáo"] ||
-           [low containsString:@"wait"] ||
-           [low containsString:@"10s"] ||
            [low containsString:@"countdown"];
 }
 
-// 1. Hook UIWindow makeKeyAndVisible & setHidden (Annihilate 10-Second Crack Popup Window)
+// 1. Hook C Vibration APIs via Fishhook (Permanently Stop Infinite 10s Countdown Vibration)
+static void (*orig_AudioServicesPlaySystemSound)(SystemSoundID inSystemSoundID);
+static void hook_AudioServicesPlaySystemSound(SystemSoundID inSystemSoundID) {
+    if (inSystemSoundID == 1519) {
+        if (orig_AudioServicesPlaySystemSound) {
+            orig_AudioServicesPlaySystemSound(inSystemSoundID);
+        }
+        return;
+    }
+    // Block all crack infinite countdown vibrations & alert sounds
+}
+
+static void (*orig_AudioServicesPlayAlertSound)(SystemSoundID inSystemSoundID);
+static void hook_AudioServicesPlayAlertSound(SystemSoundID inSystemSoundID) {
+    // Block crack alert chime/vibration
+}
+
+static void (*orig_AudioServicesPlaySystemSoundWithCompletion)(SystemSoundID inSystemSoundID, void (^inCompletionBlock)(void));
+static void hook_AudioServicesPlaySystemSoundWithCompletion(SystemSoundID inSystemSoundID, void (^inCompletionBlock)(void)) {
+    if (inSystemSoundID == 1519) {
+        if (orig_AudioServicesPlaySystemSoundWithCompletion) {
+            orig_AudioServicesPlaySystemSoundWithCompletion(inSystemSoundID, inCompletionBlock);
+        } else if (inCompletionBlock) inCompletionBlock();
+        return;
+    }
+    if (inCompletionBlock) inCompletionBlock();
+}
+
+// 2. Hook UIWindow makeKeyAndVisible & setHidden (Annihilate 10-Second Crack Popup Window)
 static void (*orig_UIWindow_makeKeyAndVisible)(UIWindow *, SEL);
 
 static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
@@ -1008,7 +1040,7 @@ static void hook_UIWindow_setHidden(UIWindow *self, SEL _cmd, BOOL hidden) {
     }
 }
 
-// 2. Hook UIAlertController creation
+// 3. Hook UIAlertController creation
 static UIAlertController *(*orig_UIAlertController_alertControllerWithTitle)(id, SEL, NSString *, NSString *, UIAlertControllerStyle);
 
 static UIAlertController *hook_UIAlertController_alertControllerWithTitle(id self, SEL _cmd, NSString *title, NSString *message, UIAlertControllerStyle preferredStyle) {
@@ -1018,7 +1050,7 @@ static UIAlertController *hook_UIAlertController_alertControllerWithTitle(id sel
     return orig_UIAlertController_alertControllerWithTitle(self, _cmd, title, message, preferredStyle);
 }
 
-// 3. Hook UIViewController presentViewController
+// 4. Hook UIViewController presentViewController
 static void (*orig_UIViewController_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
 
 static void hook_UIViewController_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vc, BOOL animated, void (^completion)(void)) {
@@ -1059,7 +1091,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     }
 }
 
-// 4. Hook UIApplication openURL (Block opening telegram links externally)
+// 5. Hook UIApplication openURL (Block opening telegram links externally)
 static BOOL (*orig_UIApplication_openURL)(UIApplication *, SEL, NSURL *);
 
 static BOOL hook_UIApplication_openURL(UIApplication *self, SEL _cmd, NSURL *url) {
@@ -1081,34 +1113,6 @@ static void hook_UIApplication_openURL_options_completionHandler(UIApplication *
     }
     if (orig_UIApplication_openURL_options_completionHandler) {
         orig_UIApplication_openURL_options_completionHandler(self, _cmd, url, options, completion);
-    }
-}
-
-// 5. Hook UIView addSubview (Remove any view displaying telegram/countdown strings)
-static void (*orig_UIView_addSubview)(UIView *, SEL, UIView *);
-
-static void hook_UIView_addSubview(UIView *self, SEL _cmd, UIView *subview) {
-    if (subview) {
-        for (UIView *v in subview.subviews) {
-            if ([v isKindOfClass:[UILabel class]]) {
-                UILabel *lbl = (UILabel *)v;
-                if (AMIsForbiddenString(lbl.text)) {
-                    subview.hidden = YES;
-                    subview.frame = CGRectZero;
-                    return;
-                }
-            } else if ([v isKindOfClass:[UITextView class]]) {
-                UITextView *tv = (UITextView *)v;
-                if (AMIsForbiddenString(tv.text)) {
-                    subview.hidden = YES;
-                    subview.frame = CGRectZero;
-                    return;
-                }
-            }
-        }
-    }
-    if (orig_UIView_addSubview) {
-        orig_UIView_addSubview(self, _cmd, subview);
     }
 }
 
@@ -1166,7 +1170,14 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
     });
 
-    // 1. Hook UIWindow to destroy 10-second alert window
+    // 1. Rebind C AudioServices vibration functions via Fishhook
+    rebind_symbols((struct rebinding[3]){
+        {"AudioServicesPlaySystemSound", (void *)hook_AudioServicesPlaySystemSound, (void **)&orig_AudioServicesPlaySystemSound},
+        {"AudioServicesPlayAlertSound", (void *)hook_AudioServicesPlayAlertSound, (void **)&orig_AudioServicesPlayAlertSound},
+        {"AudioServicesPlaySystemSoundWithCompletion", (void *)hook_AudioServicesPlaySystemSoundWithCompletion, (void **)&orig_AudioServicesPlaySystemSoundWithCompletion}
+    }, 3);
+
+    // 2. Hook UIWindow to destroy 10-second alert window
     Class windowClass = [UIWindow class];
     Method makeKeyMethod = class_getInstanceMethod(windowClass, @selector(makeKeyAndVisible));
     if (makeKeyMethod) {
@@ -1180,7 +1191,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(setHiddenMethod, (IMP)hook_UIWindow_setHidden);
     }
 
-    // 2. Hook UIActivityViewController
+    // 3. Hook UIActivityViewController
     Class activityVCClass = [UIActivityViewController class];
     Method initActivityMethod = class_getInstanceMethod(activityVCClass, @selector(initWithActivityItems:applicationActivities:));
     if (initActivityMethod) {
@@ -1188,7 +1199,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
-    // 3. Hook UIViewController viewDidAppear & presentViewController
+    // 4. Hook UIViewController viewDidAppear & presentViewController
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
@@ -1202,7 +1213,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 
-    // 4. Hook UIAlertController factory
+    // 5. Hook UIAlertController factory
     Class alertClass = objc_getClass("UIAlertController");
     if (alertClass) {
         Method alertCreateMethod = class_getClassMethod(alertClass, @selector(alertControllerWithTitle:message:preferredStyle:));
@@ -1212,7 +1223,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         }
     }
 
-    // 5. Hook UIApplication openURL
+    // 6. Hook UIApplication openURL
     Class appClass = [UIApplication class];
     Method openURLMethod = class_getInstanceMethod(appClass, @selector(openURL:));
     if (openURLMethod) {
@@ -1224,14 +1235,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
     if (openURLOptMethod) {
         orig_UIApplication_openURL_options_completionHandler = (void *)method_getImplementation(openURLOptMethod);
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
-    }
-
-    // 6. Hook UIView addSubview
-    Class viewClass = [UIView class];
-    Method addSubviewMethod = class_getInstanceMethod(viewClass, @selector(addSubview:));
-    if (addSubviewMethod) {
-        orig_UIView_addSubview = (void *)method_getImplementation(addSubviewMethod);
-        method_setImplementation(addSubviewMethod, (IMP)hook_UIView_addSubview);
     }
 
     // 7. Hook TextInputVC
