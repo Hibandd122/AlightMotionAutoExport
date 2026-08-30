@@ -19,7 +19,7 @@ static void AMNotifyUser(NSString *title, NSString *body) {
                                                                   withCompletionHandler:nil];
 }
 
-#pragma mark - Settings Storage
+#pragma mark - Settings & Persistence Storage
 
 static BOOL AMIsAutoSaveEnabled(void) {
     NSNumber *val = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_AutoSaveToPhotos"];
@@ -81,7 +81,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Lyrics Queue Manager
+#pragma mark - Lyrics Queue Manager (With Persistent Disk Storage)
 
 @interface AMLyricsQueueManager : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
@@ -90,6 +90,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 - (void)loadLyrics:(NSArray<NSString *> *)lines;
 - (void)clearLyrics;
 - (void)resetToFirstVerse;
+- (void)jumpToVerseIndex:(NSUInteger)index;
 - (NSString *)currentLineText;
 - (NSString *)consumeNextLineText;
 - (BOOL)hasNextLine;
@@ -103,9 +104,24 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     dispatch_once(&onceToken, ^{
         mgr = [[self alloc] init];
         mgr.lyricsLines = [NSMutableArray array];
-        mgr.currentIndex = 0;
+        
+        // Restore from disk cache
+        NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_CachedLyrics"];
+        if (cached && [cached isKindOfClass:[NSArray class]]) {
+            [mgr.lyricsLines addObjectsFromArray:cached];
+        }
+        mgr.currentIndex = [[NSUserDefaults standardUserDefaults] integerForKey:@"AM_CachedLyricsIndex"];
+        if (mgr.currentIndex >= mgr.lyricsLines.count) {
+            mgr.currentIndex = 0;
+        }
     });
     return mgr;
+}
+
+- (void)saveToDisk {
+    [[NSUserDefaults standardUserDefaults] setObject:self.lyricsLines forKey:@"AM_CachedLyrics"];
+    [[NSUserDefaults standardUserDefaults] setInteger:self.currentIndex forKey:@"AM_CachedLyricsIndex"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 - (void)loadLyrics:(NSArray<NSString *> *)lines {
@@ -114,15 +130,25 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         [self.lyricsLines addObjectsFromArray:lines];
     }
     self.currentIndex = 0;
+    [self saveToDisk];
 }
 
 - (void)clearLyrics {
     [self.lyricsLines removeAllObjects];
     self.currentIndex = 0;
+    [self saveToDisk];
 }
 
 - (void)resetToFirstVerse {
     self.currentIndex = 0;
+    [self saveToDisk];
+}
+
+- (void)jumpToVerseIndex:(NSUInteger)index {
+    if (index < self.lyricsLines.count) {
+        self.currentIndex = index;
+        [self saveToDisk];
+    }
 }
 
 - (NSString *)currentLineText {
@@ -136,6 +162,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     if (self.currentIndex < self.lyricsLines.count) {
         NSString *line = self.lyricsLines[self.currentIndex];
         self.currentIndex++;
+        [self saveToDisk];
         return line;
     }
     return nil;
@@ -537,10 +564,11 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar
+#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Safe-Area & Orientation Aware)
 
 @interface AMMinimalLyricsBar : UIView
 @property (nonatomic, weak) UIViewController *targetVC;
+@property (nonatomic, strong) UIView *capsule;
 @property (nonatomic, strong) UIButton *prevBtn;
 @property (nonatomic, strong) UIButton *nextBtn;
 @property (nonatomic, strong) UIButton *versePillBtn;
@@ -554,72 +582,74 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 + (instancetype)barForViewController:(UIViewController *)vc {
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 40.0)];
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
+    bar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 
-    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 34.0)];
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
     capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
-    capsule.layer.cornerRadius = 17.0;
+    capsule.layer.cornerRadius = 18.0;
     capsule.layer.borderWidth = 1.0;
     capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.35].CGColor;
     capsule.clipsToBounds = YES;
     capsule.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [bar addSubview:capsule];
+    bar.capsule = capsule;
 
     CGFloat capW = capsule.bounds.size.width;
 
     UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
-    prev.frame = CGRectMake(4.0, 3.0, 28.0, 28.0);
+    prev.frame = CGRectMake(4.0, 3.0, 30.0, 30.0);
     [prev setTitle:@"‹" forState:UIControlStateNormal];
     [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
-    prev.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     prev.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    prev.layer.cornerRadius = 14.0;
+    prev.layer.cornerRadius = 15.0;
     [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:prev];
     bar.prevBtn = prev;
 
     UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
-    next.frame = CGRectMake(36.0, 3.0, 28.0, 28.0);
+    next.frame = CGRectMake(38.0, 3.0, 30.0, 30.0);
     [next setTitle:@"›" forState:UIControlStateNormal];
     [next setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
-    next.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     next.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    next.layer.cornerRadius = 14.0;
+    next.layer.cornerRadius = 15.0;
     [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:next];
     bar.nextBtn = next;
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(capW - 32.0, 3.0, 28.0, 28.0);
+    close.frame = CGRectMake(capW - 34.0, 3.0, 30.0, 30.0);
     [close setTitle:@"✕" forState:UIControlStateNormal];
     [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
-    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    close.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     close.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    close.layer.cornerRadius = 14.0;
+    close.layer.cornerRadius = 15.0;
     close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:close];
     bar.closeBtn = close;
 
     UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
-    menu.frame = CGRectMake(capW - 64.0, 3.0, 28.0, 28.0);
+    menu.frame = CGRectMake(capW - 68.0, 3.0, 30.0, 30.0);
     [menu setTitle:@"📋" forState:UIControlStateNormal];
     menu.titleLabel.font = [UIFont systemFontOfSize:14];
     menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    menu.layer.cornerRadius = 14.0;
+    menu.layer.cornerRadius = 15.0;
     menu.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
     [capsule addSubview:menu];
     bar.menuBtn = menu;
 
-    CGFloat centerStartX = 68.0;
-    CGFloat centerW = capW - 68.0 - 68.0;
+    CGFloat centerStartX = 72.0;
+    CGFloat centerW = capW - 72.0 - 72.0;
     UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
-    verse.frame = CGRectMake(centerStartX, 3.0, centerW, 28.0);
+    verse.frame = CGRectMake(centerStartX, 3.0, centerW, 30.0);
     verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.18];
-    verse.layer.cornerRadius = 14.0;
+    verse.layer.cornerRadius = 15.0;
     verse.layer.borderWidth = 0.8;
     verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
     [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -633,6 +663,15 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     [bar refreshDisplay];
     return bar;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    UIEdgeInsets insets = self.safeAreaInsets;
+    CGFloat w = self.bounds.size.width;
+    CGFloat padLeft = MAX(8.0, insets.left);
+    CGFloat padRight = MAX(8.0, insets.right);
+    self.capsule.frame = CGRectMake(padLeft, 3.0, w - padLeft - padRight, 36.0);
 }
 
 - (void)refreshDisplay {
@@ -701,6 +740,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.currentIndex > 0) {
         mgr.currentIndex--;
+        [mgr saveToDisk];
     }
     [self refreshDisplay];
 }
@@ -709,6 +749,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
         mgr.currentIndex++;
+        [mgr saveToDisk];
     }
     [self refreshDisplay];
 }
@@ -908,7 +949,7 @@ static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
     if (self.windowLevel >= UIWindowLevelAlert) {
         self.hidden = YES;
         self.frame = CGRectZero;
-        return; // Destroy the alert window completely!
+        return;
     }
     if (orig_UIWindow_makeKeyAndVisible) {
         orig_UIWindow_makeKeyAndVisible(self, _cmd);
@@ -919,7 +960,7 @@ static void (*orig_UIWindow_setHidden)(UIWindow *, SEL, BOOL);
 
 static void hook_UIWindow_setHidden(UIWindow *self, SEL _cmd, BOOL hidden) {
     if (!hidden && self.windowLevel >= UIWindowLevelAlert) {
-        hidden = YES; // Force keep hidden
+        hidden = YES;
     }
     if (orig_UIWindow_setHidden) {
         orig_UIWindow_setHidden(self, _cmd, hidden);
