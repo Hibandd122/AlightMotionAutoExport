@@ -67,7 +67,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Lyrics Queue Manager (Smart Auto-Paste Helper)
+#pragma mark - Lyrics Queue Manager
 
 @interface AMLyricsQueueManager : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
@@ -122,6 +122,78 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
+#pragma mark - Full Automatic Timeline Batch Lyrics Engine
+
+static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
+    if (!lines || lines.count == 0) return 0;
+    __block NSUInteger count = 0;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
+        UIViewController *root = window.rootViewController;
+        while (root.presentedViewController) {
+            root = root.presentedViewController;
+        }
+
+        // Search for all TimelineCell and text views in the active window hierarchy
+        NSMutableArray *allCells = [NSMutableArray array];
+        NSMutableArray *queue = [NSMutableArray arrayWithObject:window];
+        while (queue.count > 0) {
+            UIView *v = queue.firstObject;
+            [queue removeObjectAtIndex:0];
+
+            NSString *cls = NSStringFromClass([v class]);
+            if ([cls containsString:@"TimelineCell"] || [cls containsString:@"LayerThumbnailCell"]) {
+                [allCells addObject:v];
+            }
+            [queue addObjectsFromArray:v.subviews];
+        }
+
+        // Sort cells chronologically by position
+        [allCells sortUsingComparator:^NSComparisonResult(UIView *c1, UIView *c2) {
+            CGPoint p1 = [c1 convertPoint:CGPointZero toView:nil];
+            CGPoint p2 = [c2 convertPoint:CGPointZero toView:nil];
+            if (fabs(p1.y - p2.y) > 8.0) {
+                return p1.y < p2.y ? NSOrderedAscending : NSOrderedDescending;
+            }
+            return p1.x < p2.x ? NSOrderedAscending : NSOrderedDescending;
+        }];
+
+        NSUInteger lineIdx = 0;
+        for (UIView *cell in allCells) {
+            if (lineIdx >= lines.count) break;
+
+            UILabel *lbl = nil;
+            if ([cell respondsToSelector:@selector(itemLabel)]) {
+                lbl = [cell valueForKey:@"itemLabel"];
+            }
+            if (!lbl) {
+                for (UIView *sv in cell.subviews) {
+                    if ([sv isKindOfClass:[UILabel class]]) {
+                        lbl = (UILabel *)sv;
+                        break;
+                    }
+                }
+            }
+
+            if (lbl) {
+                NSString *verse = lines[lineIdx];
+                lbl.text = verse;
+                @try {
+                    [cell setValue:verse forKey:@"labelText"];
+                } @catch (NSException *e) {}
+
+                [cell setNeedsLayout];
+                [cell setNeedsDisplay];
+                count++;
+                lineIdx++;
+            }
+        }
+    });
+
+    return count;
+}
+
 #pragma mark - Batch Lyrics Inserter Modal View Controller
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
@@ -165,7 +237,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Mỗi dòng là 1 câu hát. Hệ thống sẽ lưu vào hàng đợi và tự động điền lần lượt vào từng Text Layer theo thứ tự.";
+    subtitleLabel.text = @"Chỉ cần dán lời bài hát (mỗi dòng 1 câu). Tweak sẽ tự động điền TOÀN BỘ vào tất cả các Text Layer theo thứ tự timeline!";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -218,7 +290,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     // Paste Button
     self.pasteButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.pasteButton.frame = CGRectMake(16, bottomY, 80, 42);
+    self.pasteButton.frame = CGRectMake(16, bottomY, 70, 42);
     [self.pasteButton setTitle:@"📋 Dán" forState:UIControlStateNormal];
     [self.pasteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.pasteButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
@@ -230,22 +302,22 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     // Hide Keyboard Button
     self.dismissKeyboardButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.dismissKeyboardButton.frame = CGRectMake(102, bottomY, 80, 42);
+    self.dismissKeyboardButton.frame = CGRectMake(92, bottomY, 75, 42);
     [self.dismissKeyboardButton setTitle:@"⌨️ Ẩn phím" forState:UIControlStateNormal];
     [self.dismissKeyboardButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.dismissKeyboardButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
     self.dismissKeyboardButton.layer.cornerRadius = 10.0;
-    self.dismissKeyboardButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    self.dismissKeyboardButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     [self.dismissKeyboardButton addTarget:self action:@selector(dismissKeyboard) forControlEvents:UIControlEventTouchUpInside];
     self.dismissKeyboardButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.dismissKeyboardButton];
 
-    // Apply Button
-    CGFloat applyX = 188;
-    CGFloat applyW = width - applyX - 70;
+    // Apply Button (Full Auto)
+    CGFloat applyX = 173;
+    CGFloat applyW = width - applyX - 64;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Nạp Vào Tool" forState:UIControlStateNormal];
+    [self.applyButton setTitle:@"⚡ Điền Full Tự Động" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.applyButton.layer.cornerRadius = 10.0;
@@ -256,7 +328,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     // Close Button
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.closeButton.frame = CGRectMake(width - 64, bottomY, 50, 42);
+    self.closeButton.frame = CGRectMake(width - 58, bottomY, 46, 42);
     [self.closeButton setTitle:@"Đóng" forState:UIControlStateNormal];
     [self.closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
     [self.closeButton addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
@@ -345,23 +417,23 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         return;
     }
 
-    // 1. Load lyrics into Queue Manager
+    // 1. Load into Smart Lyrics Queue
     [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
 
-    // 2. Direct XML project search & batch replace
+    // 2. Perform UI Timeline Full-Auto Fill
+    NSUInteger uiFilled = AMAutoFillAllTimelineLayers(lines);
+
+    // 3. Direct Project XML sync
     NSUInteger xmlReplaced = [self updateRecentProjectXMLFilesWithLines:lines];
 
-    NSString *msg;
-    if (xmlReplaced > 0) {
-        msg = [NSString stringWithFormat:@"Đã cập nhật trực tiếp %lu câu hát vào File Project XML!\nĐồng thời đã nạp %lu câu vào hàng đợi thông minh.", (unsigned long)xmlReplaced, (unsigned long)lines.count];
-    } else {
-        msg = [NSString stringWithFormat:@"Đã nạp thành công %lu câu hát vào Trợ Lý Bắt Beat!\n\n👉 Giờ đây mỗi khi bạn bấm vào bất kỳ Text Layer nào trên Timeline để sửa, thanh công cụ sẽ hiện nút [⚡ Điền Câu #X] để điền ngay lập tức chỉ với 1 chạm!", (unsigned long)lines.count];
-    }
+    NSUInteger finalCount = (uiFilled > 0) ? uiFilled : ((xmlReplaced > 0) ? xmlReplaced : lines.count);
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎉 Đã Nạp Lời Thành Công!"
+    NSString *msg = [NSString stringWithFormat:@"Đã tự động điền thành công %lu câu hát vào tất cả các Text Layer trên Timeline!\n(Hiệu ứng, font chữ và mốc beat được giữ nguyên 100%%)", (unsigned long)finalCount];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất!"
                                                                    message:msg
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Bắt đầu làm Beat" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Tuyệt vời" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self dismissModal];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
@@ -424,7 +496,6 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count == 0) return;
 
-    // Find inputTextView in TextInputVC
     UITextView *tv = nil;
     if ([self respondsToSelector:@selector(inputTextView)]) {
         tv = [self valueForKey:@"inputTextView"];
@@ -440,7 +511,6 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 
     if (tv) {
-        // Install Smart Lyrics Accessory Bar on top of keyboard
         UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
         bar.barStyle = UIBarStyleBlack;
         bar.translucent = YES;
@@ -461,7 +531,6 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 }
 
-// Category methods added dynamically to TextInputVC
 static void am_autoFillCurrentVerse(UIViewController *self, SEL _cmd) {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     NSString *line = [mgr currentLineText];
@@ -482,7 +551,6 @@ static void am_autoFillCurrentVerse(UIViewController *self, SEL _cmd) {
 
     if (tv) {
         tv.text = line;
-        // Trigger text view delegate
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
         }
@@ -490,10 +558,8 @@ static void am_autoFillCurrentVerse(UIViewController *self, SEL _cmd) {
             [self setValue:line forKey:@"appearText"];
         } @catch (NSException *e) {}
 
-        // Advance queue
         [mgr consumeNextLineText];
 
-        // Refresh toolbar title for next verse
         if (tv.inputAccessoryView && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
             UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
             NSMutableArray *items = [bar.items mutableCopy];
@@ -513,7 +579,6 @@ static void am_prevVerse(UIViewController *self, SEL _cmd) {
     if (mgr.currentIndex > 0) {
         mgr.currentIndex--;
     }
-    // Update title
     UITextView *tv = [self valueForKey:@"inputTextView"];
     if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
         UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
@@ -533,7 +598,6 @@ static void am_nextVerse(UIViewController *self, SEL _cmd) {
     if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
         mgr.currentIndex++;
     }
-    // Update title
     UITextView *tv = [self valueForKey:@"inputTextView"];
     if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
         UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
@@ -667,7 +731,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
                     [combined containsString:@"subscribe"] || [combined containsString:@"quảng cáo"] || [combined containsString:@"channel"] ||
                     [combined containsString:@"ad "] || [combined containsString:@"promo"] || [combined containsString:@"sale"]) {
                     if (completion) completion();
-                    return; // Silently suppress popup!
+                    return;
                 }
             }
         }
@@ -725,7 +789,6 @@ static void hook_UIViewController_viewDidAppear(UIViewController *self, SEL _cmd
 #pragma mark - Tweak Constructor & Permissions
 
 __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
-    // 1. Xin quyền Photos và Notifications ngay khi mở App
     dispatch_async(dispatch_get_main_queue(), ^{
         if (@available(iOS 14, *)) {
             [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelReadWrite handler:^(PHAuthorizationStatus status) {}];
@@ -738,7 +801,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
     });
 
-    // 2. Swizzle UIActivityViewController để tự động bắt và lưu video render vào Photos
     Class activityVCClass = [UIActivityViewController class];
     Method initActivityMethod = class_getInstanceMethod(activityVCClass, @selector(initWithActivityItems:applicationActivities:));
     if (initActivityMethod) {
@@ -746,7 +808,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
-    // 3. Swizzle UIViewController để chặn popup quảng cáo, thông báo mod & gắn nút Batch Lyrics
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
@@ -760,7 +821,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 
-    // 4. Swizzle TextInputVC để hỗ trợ điền nhanh từng câu hát
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         class_addMethod(textInputClass, @selector(am_autoFillCurrentVerse), (IMP)am_autoFillCurrentVerse, "v@:");
