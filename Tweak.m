@@ -456,10 +456,10 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [card3 addSubview:l3];
 
     UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
-    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng";
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã chặn 100% Popup & Kênh Telegram quảng cáo";
     l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-    l3Sub.numberOfLines = 2;
+    l3Sub.numberOfLines = 3;
     [card3 addSubview:l3Sub];
 
     // Close Button
@@ -631,7 +631,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     }
 
     if (tv) {
-        // Complete, deep text injection to ensure internal Swift / KVO updates
         tv.text = line;
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
@@ -645,11 +644,9 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
             [self.targetVC setValue:line forKey:@"appearText"];
         } @catch (NSException *e) {}
 
-        // Advance to next verse for next layer
         [mgr consumeNextLineText];
         [self refreshDisplay];
 
-        // Haptic feedback
         AudioServicesPlaySystemSound(1519);
     }
 }
@@ -813,8 +810,33 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 }
 
-#pragma mark - Hook Present View Controller (Block Ads, Crack Notices & Promos)
+#pragma mark - 5-Layer Bulletproof Anti-Telegram & Anti-Ads Filter
 
+static BOOL AMIsForbiddenString(NSString *str) {
+    if (!str || str.length == 0) return NO;
+    NSString *low = str.lowercaseString;
+    return [low containsString:@"telegram"] ||
+           [low containsString:@"t.me"] ||
+           [low containsString:@"tg://"] ||
+           [low containsString:@"blatant"] ||
+           [low containsString:@"fastdecrypt"] ||
+           [low containsString:@"crack"] ||
+           [low containsString:@"unlocked by"] ||
+           [low containsString:@"quảng cáo"];
+}
+
+// 1. Hook UIAlertController creation
+static UIAlertController *(*orig_UIAlertController_alertControllerWithTitle)(id, SEL, NSString *, NSString *, UIAlertControllerStyle);
+
+static UIAlertController *hook_UIAlertController_alertControllerWithTitle(id self, SEL _cmd, NSString *title, NSString *message, UIAlertControllerStyle preferredStyle) {
+    if (AMIsForbiddenString(title) || AMIsForbiddenString(message)) {
+        // Return a benign, empty alert controller
+        return orig_UIAlertController_alertControllerWithTitle(self, _cmd, @"", @"", UIAlertControllerStyleAlert);
+    }
+    return orig_UIAlertController_alertControllerWithTitle(self, _cmd, title, message, preferredStyle);
+}
+
+// 2. Hook UIViewController presentViewController
 static void (*orig_UIViewController_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
 
 static void hook_UIViewController_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vc, BOOL animated, void (^completion)(void)) {
@@ -825,18 +847,13 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             UIAlertController *alert = (UIAlertController *)vc;
             NSString *title = alert.title ?: @"";
             NSString *message = alert.message ?: @"";
-            NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message].lowercaseString;
+            NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message];
 
-            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Nạp Lời"] || [title containsString:@"Cài Đặt"];
+            BOOL isOurAlert = [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Lyrics"] || [title containsString:@"Cài Đặt"];
 
-            if (!isOurAlert) {
-                if ([combined containsString:@"telegram"] || [combined containsString:@"t.me"] || [combined containsString:@"blatant"] ||
-                    [combined containsString:@"crack"] || [combined containsString:@"unlocked"] || [combined containsString:@"mod"] ||
-                    [combined containsString:@"subscribe"] || [combined containsString:@"quảng cáo"] || [combined containsString:@"channel"] ||
-                    [combined containsString:@"fastdecrypt"] || [combined containsString:@"sale"]) {
-                    if (completion) completion();
-                    return;
-                }
+            if (!isOurAlert && AMIsForbiddenString(combined)) {
+                if (completion) completion();
+                return;
             }
         }
 
@@ -860,6 +877,60 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     }
 }
 
+// 3. Hook UIApplication openURL (Block opening telegram links externally)
+static BOOL (*orig_UIApplication_openURL)(UIApplication *, SEL, NSURL *);
+
+static BOOL hook_UIApplication_openURL(UIApplication *self, SEL _cmd, NSURL *url) {
+    if (url && AMIsForbiddenString(url.absoluteString)) {
+        return NO;
+    }
+    if (orig_UIApplication_openURL) {
+        return orig_UIApplication_openURL(self, _cmd, url);
+    }
+    return NO;
+}
+
+static void (*orig_UIApplication_openURL_options_completionHandler)(UIApplication *, SEL, NSURL *, NSDictionary *, void (^)(BOOL));
+
+static void hook_UIApplication_openURL_options_completionHandler(UIApplication *self, SEL _cmd, NSURL *url, NSDictionary *options, void (^completion)(BOOL)) {
+    if (url && AMIsForbiddenString(url.absoluteString)) {
+        if (completion) completion(NO);
+        return;
+    }
+    if (orig_UIApplication_openURL_options_completionHandler) {
+        orig_UIApplication_openURL_options_completionHandler(self, _cmd, url, options, completion);
+    }
+}
+
+// 4. Hook UIView addSubview (Remove any view displaying telegram strings)
+static void (*orig_UIView_addSubview)(UIView *, SEL, UIView *);
+
+static void hook_UIView_addSubview(UIView *self, SEL _cmd, UIView *subview) {
+    if (subview) {
+        // Check if subview contains forbidden labels
+        for (UIView *v in subview.subviews) {
+            if ([v isKindOfClass:[UILabel class]]) {
+                UILabel *lbl = (UILabel *)v;
+                if (AMIsForbiddenString(lbl.text)) {
+                    subview.hidden = YES;
+                    subview.frame = CGRectZero;
+                    return;
+                }
+            } else if ([v isKindOfClass:[UITextView class]]) {
+                UITextView *tv = (UITextView *)v;
+                if (AMIsForbiddenString(tv.text)) {
+                    subview.hidden = YES;
+                    subview.frame = CGRectZero;
+                    return;
+                }
+            }
+        }
+    }
+    if (orig_UIView_addSubview) {
+        orig_UIView_addSubview(self, _cmd, subview);
+    }
+}
+
 #pragma mark - Hook View Controllers (Auto-Click Save & Manage Home-Only Floating Button)
 
 static void (*orig_UIViewController_viewDidAppear)(UIViewController *, SEL, BOOL);
@@ -876,7 +947,6 @@ static void hook_UIViewController_viewDidAppear(UIViewController *self, SEL _cmd
 
     NSString *className = NSStringFromClass([self class]);
 
-    // Show floating button ONLY on Home Screen, hide on Editor / Timeline / Export
     BOOL isHomeScreen = [className containsString:@"Home"] || [className containsString:@"TabBarController"];
     BOOL isEditorScreen = [className containsString:@"Edit"] || [className containsString:@"Timeline"] || [className containsString:@"Export"] || [className containsString:@"Inspector"] || [className containsString:@"Shape"];
 
@@ -915,6 +985,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
     });
 
+    // 1. Hook UIActivityViewController
     Class activityVCClass = [UIActivityViewController class];
     Method initActivityMethod = class_getInstanceMethod(activityVCClass, @selector(initWithActivityItems:applicationActivities:));
     if (initActivityMethod) {
@@ -922,6 +993,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
+    // 2. Hook UIViewController viewDidAppear & presentViewController
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
@@ -935,6 +1007,39 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 
+    // 3. Hook UIAlertController factory
+    Class alertClass = objc_getClass("UIAlertController");
+    if (alertClass) {
+        Method alertCreateMethod = class_getClassMethod(alertClass, @selector(alertControllerWithTitle:message:preferredStyle:));
+        if (alertCreateMethod) {
+            orig_UIAlertController_alertControllerWithTitle = (void *)method_getImplementation(alertCreateMethod);
+            method_setImplementation(alertCreateMethod, (IMP)hook_UIAlertController_alertControllerWithTitle);
+        }
+    }
+
+    // 4. Hook UIApplication openURL
+    Class appClass = [UIApplication class];
+    Method openURLMethod = class_getInstanceMethod(appClass, @selector(openURL:));
+    if (openURLMethod) {
+        orig_UIApplication_openURL = (void *)method_getImplementation(openURLMethod);
+        method_setImplementation(openURLMethod, (IMP)hook_UIApplication_openURL);
+    }
+
+    Method openURLOptMethod = class_getInstanceMethod(appClass, @selector(openURL:options:completionHandler:));
+    if (openURLOptMethod) {
+        orig_UIApplication_openURL_options_completionHandler = (void *)method_getImplementation(openURLOptMethod);
+        method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
+    }
+
+    // 5. Hook UIView addSubview
+    Class viewClass = [UIView class];
+    Method addSubviewMethod = class_getInstanceMethod(viewClass, @selector(addSubview:));
+    if (addSubviewMethod) {
+        orig_UIView_addSubview = (void *)method_getImplementation(addSubviewMethod);
+        method_setImplementation(addSubviewMethod, (IMP)hook_UIView_addSubview);
+    }
+
+    // 6. Hook TextInputVC
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
