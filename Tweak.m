@@ -36,6 +36,7 @@ static void AMAutoSaveVideoAtPath(NSString *filePath) {
     UISaveVideoAtPathToSavedPhotosAlbum(filePath, nil, NULL, NULL);
     AMNotifyUser(@"Alight Motion Pro", @"Video đã được tự động lưu vào Cuộn Camera (Photos) thành công!");
 
+    // Debounce for 5 seconds
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         hasSavedRecentVideo = NO;
     });
@@ -71,7 +72,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 @interface AMLyricsQueueManager : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
 @property (nonatomic, assign) NSUInteger currentIndex;
-@property (nonatomic, assign) BOOL isAutoBatchRunning;
 + (instancetype)sharedManager;
 - (void)loadLyrics:(NSArray<NSString *> *)lines;
 - (NSString *)currentLineText;
@@ -88,7 +88,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         mgr = [[self alloc] init];
         mgr.lyricsLines = [NSMutableArray array];
         mgr.currentIndex = 0;
-        mgr.isAutoBatchRunning = NO;
     });
     return mgr;
 }
@@ -123,90 +122,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Full Automatic Timeline Batch Lyrics Runner
-
-static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
-    if (!lines || lines.count == 0) return;
-
-    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    [mgr loadLyrics:lines];
-    mgr.isAutoBatchRunning = YES;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
-        UIViewController *root = window.rootViewController;
-        while (root.presentedViewController) {
-            root = root.presentedViewController;
-        }
-
-        // Collect all TimelineCell views
-        NSMutableArray *allCells = [NSMutableArray array];
-        NSMutableArray *queue = [NSMutableArray arrayWithObject:window];
-        while (queue.count > 0) {
-            UIView *v = queue.firstObject;
-            [queue removeObjectAtIndex:0];
-
-            NSString *cls = NSStringFromClass([v class]);
-            if ([cls containsString:@"TimelineCell"]) {
-                [allCells addObject:v];
-            }
-            [queue addObjectsFromArray:v.subviews];
-        }
-
-        // Sort cells top to bottom
-        [allCells sortUsingComparator:^NSComparisonResult(UIView *c1, UIView *c2) {
-            CGPoint p1 = [c1 convertPoint:CGPointZero toView:nil];
-            CGPoint p2 = [c2 convertPoint:CGPointZero toView:nil];
-            if (fabs(p1.y - p2.y) > 8.0) {
-                return p1.y < p2.y ? NSOrderedAscending : NSOrderedDescending;
-            }
-            return p1.x < p2.x ? NSOrderedAscending : NSOrderedDescending;
-        }];
-
-        // Auto-run tap sequence across all timeline cells
-        for (NSUInteger i = 0; i < allCells.count && i < lines.count; i++) {
-            UIView *cell = allCells[i];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                // Update cell label immediately
-                UILabel *lbl = nil;
-                if ([cell respondsToSelector:@selector(itemLabel)]) {
-                    lbl = [cell valueForKey:@"itemLabel"];
-                }
-                if (lbl) {
-                    lbl.text = lines[i];
-                }
-                @try {
-                    [cell setValue:lines[i] forKey:@"labelText"];
-                } @catch (NSException *e) {}
-
-                [cell setNeedsLayout];
-                [cell setNeedsDisplay];
-
-                // Trigger select gesture
-                for (UIGestureRecognizer *g in cell.gestureRecognizers) {
-                    if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
-                        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)g;
-                        for (id target in [tap valueForKey:@"targets"]) {
-                            id t = [target valueForKey:@"target"];
-                            SEL a = NSSelectorFromString([target valueForKey:@"action"]);
-                            if (t && a && [t respondsToSelector:a]) {
-                                #pragma clang diagnostic push
-                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                                [t performSelector:a withObject:tap];
-                                #pragma clang diagnostic pop
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(lines.count * 0.25 * NSEC_PER_SEC + 0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            mgr.isAutoBatchRunning = NO;
-        });
-    });
-}
-
 #pragma mark - Batch Lyrics Inserter Modal View Controller
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
@@ -216,7 +131,7 @@ static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
 @property (nonatomic, strong) UIButton *dismissKeyboardButton;
 @property (nonatomic, strong) UIButton *applyButton;
 @property (nonatomic, strong) UIButton *closeButton;
-@property (nonatomic, weak) UIViewController *parentPresenter;
+@property (nonatomic, copy) void (^onLyricsLoaded)(void);
 @end
 
 @implementation AMBatchLyricsViewController
@@ -233,6 +148,13 @@ static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
     [self setupTextView];
     [self setupButtons];
 
+    // Preload existing text if available
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count > 0) {
+        self.textView.text = [mgr.lyricsLines componentsJoinedByString:@"\n"];
+        [self updateLineCount];
+    }
+
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
 }
@@ -243,14 +165,14 @@ static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
 
 - (void)setupHeader {
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
-    titleLabel.text = @"📝 Tự Động Điền Lời Bài Hát (Batch Lyrics)";
+    titleLabel.text = @"📝 Nạp Lời Bài Hát (Batch Lyrics)";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Dán danh sách lời bài hát. Bấm nút dưới để TỰ ĐỘNG ĐIỀN TOÀN BỘ vào tất cả các Text Layer trên Timeline!";
+    subtitleLabel.text = @"Dán danh sách câu hát (mỗi dòng 1 câu). Khi chỉnh sửa text layer, thanh công cụ sẽ tự động xuất hiện nút [⚡ Điền Câu].";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -325,17 +247,17 @@ static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
     self.dismissKeyboardButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.dismissKeyboardButton];
 
-    // Apply Button (Full Auto)
+    // Apply Button
     CGFloat applyX = 173;
     CGFloat applyW = width - applyX - 64;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Điền Full Tự Động" forState:UIControlStateNormal];
+    [self.applyButton setTitle:@"⚡ Lưu Hàng Đợi" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.applyButton.layer.cornerRadius = 10.0;
     self.applyButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-    [self.applyButton addTarget:self action:@selector(applyLyricsToTimeline) forControlEvents:UIControlEventTouchUpInside];
+    [self.applyButton addTarget:self action:@selector(applyLyricsToQueue) forControlEvents:UIControlEventTouchUpInside];
     self.applyButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.applyButton];
 
@@ -418,38 +340,93 @@ static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
-- (void)applyLyricsToTimeline {
+- (void)applyLyricsToQueue {
     [self.view endEditing:YES];
     NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
     if (lines.count == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Thông báo"
-                                                                       message:@"Vui lòng dán lời bài hát (ít nhất 1 câu) trước khi áp dụng."
+                                                                       message:@"Vui lòng dán lời bài hát (ít nhất 1 câu) trước khi lưu."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
-    // Launch Full Auto Fill sequence
-    AMRunFullAutoBatchFilling(lines);
+    [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
 
-    [self dismissModal];
-    AMNotifyUser(@"Alight Motion Pro", [NSString stringWithFormat:@"Đang tự động điền %lu câu hát vào toàn bộ Text Layer...", (unsigned long)lines.count]);
+    if (self.onLyricsLoaded) {
+        self.onLyricsLoaded();
+    }
+
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
 
-#pragma mark - Hook TextInputVC & EditTextPanelVC (Instant Auto-Fill on Open & Auto-Done)
+#pragma mark - Hook TextInputVC (Integrated Toolbar: [⏪] [⏩] [⚡ Điền Câu #X/N] [📋 Nạp Lời] [✅ Xong])
 
 static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+
+static void am_refreshToolbarForTextInputVC(UIViewController *vc);
 
 static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     if (orig_TextInputVC_viewDidAppear) {
         orig_TextInputVC_viewDidAppear(self, _cmd, animated);
     }
+    am_refreshToolbarForTextInputVC(self);
+}
 
+static void am_refreshToolbarForTextInputVC(UIViewController *self) {
+    UITextView *tv = nil;
+    if ([self respondsToSelector:@selector(inputTextView)]) {
+        tv = [self valueForKey:@"inputTextView"];
+    }
+    if (!tv) {
+        for (UIView *sub in self.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+
+        UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
+        bar.barStyle = UIBarStyleBlack;
+        bar.translucent = YES;
+        bar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+
+        NSMutableArray *items = [NSMutableArray array];
+
+        if (mgr.lyricsLines.count > 0) {
+            UIBarButtonItem *prevItem = [[UIBarButtonItem alloc] initWithTitle:@"⏪" style:UIBarButtonItemStylePlain target:self action:@selector(am_prevVerse)];
+            UIBarButtonItem *nextItem = [[UIBarButtonItem alloc] initWithTitle:@"⏩" style:UIBarButtonItemStylePlain target:self action:@selector(am_nextVerse)];
+
+            NSUInteger curIdx = mgr.currentIndex + 1;
+            NSString *btnTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curIdx, (unsigned long)mgr.lyricsLines.count];
+            UIBarButtonItem *fillItem = [[UIBarButtonItem alloc] initWithTitle:btnTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_fillCurrentVerse)];
+
+            [items addObjectsFromArray:@[prevItem, nextItem, fillItem]];
+        }
+
+        UIBarButtonItem *loadLyricsItem = [[UIBarButtonItem alloc] initWithTitle:@"📋 Nạp Lời" style:UIBarButtonItemStylePlain target:self action:@selector(am_openLyricsModal)];
+        UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+        UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Xong" style:UIBarButtonItemStylePlain target:self action:@selector(am_dismissKeyboard)];
+
+        [items addObjectsFromArray:@[flex, loadLyricsItem, doneItem]];
+
+        [bar setItems:items];
+        tv.inputAccessoryView = bar;
+        [tv reloadInputViews];
+    }
+}
+
+static void am_fillCurrentVerse(UIViewController *self, SEL _cmd) {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    if (mgr.lyricsLines.count == 0) return;
+    NSString *line = [mgr currentLineText];
+    if (!line) return;
 
     UITextView *tv = nil;
     if ([self respondsToSelector:@selector(inputTextView)]) {
@@ -465,127 +442,50 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 
     if (tv) {
-        // Automatically inject current verse immediately!
-        NSString *line = [mgr currentLineText];
-        if (line && line.length > 0) {
-            tv.text = line;
-            if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
-                [tv.delegate textViewDidChange:tv];
-            }
-            @try {
-                [self setValue:line forKey:@"appearText"];
-            } @catch (NSException *e) {}
-
-            // Advance to next verse for next layer
-            [mgr consumeNextLineText];
+        tv.text = line;
+        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+            [tv.delegate textViewDidChange:tv];
         }
+        @try {
+            [self setValue:line forKey:@"appearText"];
+        } @catch (NSException *e) {}
 
-        // If in auto batch mode, automatically trigger done button after 0.1s
-        if (mgr.isAutoBatchRunning) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIViewController *parent = self.parentViewController;
-                if (parent && [parent respondsToSelector:@selector(doneButton)]) {
-                    UIButton *doneBtn = [parent valueForKey:@"doneButton"];
-                    if ([doneBtn isKindOfClass:[UIButton class]]) {
-                        [doneBtn sendActionsForControlEvents:UIControlEventTouchUpInside];
-                    }
-                }
-            });
-        }
+        // Advance to next verse for next layer
+        [mgr consumeNextLineText];
+
+        // Refresh bar
+        am_refreshToolbarForTextInputVC(self);
     }
 }
 
-#pragma mark - Floating Tool Button Manager
-
-@interface AMBatchLyricsHUD : NSObject
-@property (nonatomic, strong) UIButton *floatingButton;
-@property (nonatomic, weak) UIWindow *parentWindow;
-+ (instancetype)sharedHUD;
-- (void)installFloatingButtonOnWindow:(UIWindow *)window;
-@end
-
-@implementation AMBatchLyricsHUD
-
-+ (instancetype)sharedHUD {
-    static AMBatchLyricsHUD *hud = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        hud = [[self alloc] init];
-    });
-    return hud;
-}
-
-- (void)installFloatingButtonOnWindow:(UIWindow *)window {
-    if (self.floatingButton || !window) return;
-    self.parentWindow = window;
-
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    btn.frame = CGRectMake(16.0, window.bounds.size.height - 140.0, 48.0, 48.0);
-    btn.layer.cornerRadius = 24.0;
-    btn.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.9];
-    btn.layer.borderWidth = 1.5;
-    btn.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.8].CGColor;
-    btn.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
-    btn.layer.shadowOffset = CGSizeMake(0, 4);
-    btn.layer.shadowRadius = 8.0;
-    btn.layer.shadowOpacity = 0.8;
-
-    [btn setTitle:@"📝" forState:UIControlStateNormal];
-    btn.titleLabel.font = [UIFont systemFontOfSize:22.0];
-    [btn addTarget:self action:@selector(floatingButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-    [btn addGestureRecognizer:pan];
-    self.floatingButton = btn;
-
-    [window addSubview:btn];
-    [window bringSubviewToFront:btn];
-}
-
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *view = pan.view;
-    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    if (!view || !window) return;
-
-    CGPoint translation = [pan translationInView:window];
-    CGPoint center = view.center;
-    center.x += translation.x;
-    center.y += translation.y;
-
-    CGFloat halfW = view.bounds.size.width / 2.0;
-    CGFloat halfH = view.bounds.size.height / 2.0;
-    CGFloat minX = halfW + 8.0;
-    CGFloat maxX = window.bounds.size.width - halfW - 8.0;
-    CGFloat minY = halfH + window.safeAreaInsets.top + 8.0;
-    CGFloat maxY = window.bounds.size.height - halfH - window.safeAreaInsets.bottom - 8.0;
-
-    center.x = MAX(minX, MIN(maxX, center.x));
-    center.y = MAX(minY, MIN(maxY, center.y));
-    view.center = center;
-    [pan setTranslation:CGPointZero inView:window];
-
-    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat snapX = (center.x < window.bounds.size.width / 2.0) ? minX : maxX;
-        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
-            view.center = CGPointMake(snapX, center.y);
-        } completion:nil];
+static void am_prevVerse(UIViewController *self, SEL _cmd) {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex > 0) {
+        mgr.currentIndex--;
     }
+    am_refreshToolbarForTextInputVC(self);
 }
 
-- (void)floatingButtonTapped:(UIButton *)sender {
-    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    UIViewController *root = window.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
+static void am_nextVerse(UIViewController *self, SEL _cmd) {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
+        mgr.currentIndex++;
     }
-
-    AMBatchLyricsViewController *vc = [[AMBatchLyricsViewController alloc] init];
-    vc.parentPresenter = root;
-    vc.modalPresentationStyle = UIModalPresentationFormSheet;
-    [root presentViewController:vc animated:YES completion:nil];
+    am_refreshToolbarForTextInputVC(self);
 }
 
-@end
+static void am_dismissKeyboard(UIViewController *self, SEL _cmd) {
+    [self.view endEditing:YES];
+}
+
+static void am_openLyricsModal(UIViewController *self, SEL _cmd) {
+    AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
+    modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    modal.onLyricsLoaded = ^{
+        am_refreshToolbarForTextInputVC(self);
+    };
+    [self presentViewController:modal animated:YES completion:nil];
+}
 
 #pragma mark - Hook Present View Controller (Block Ads, Crack Notices & Promos)
 
@@ -601,13 +501,13 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             NSString *message = alert.message ?: @"";
             NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message].lowercaseString;
 
-            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Đã Nạp"];
+            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Nạp Lời"];
 
             if (!isOurAlert) {
                 if ([combined containsString:@"telegram"] || [combined containsString:@"t.me"] || [combined containsString:@"blatant"] ||
                     [combined containsString:@"crack"] || [combined containsString:@"unlocked"] || [combined containsString:@"mod"] ||
                     [combined containsString:@"subscribe"] || [combined containsString:@"quảng cáo"] || [combined containsString:@"channel"] ||
-                    [combined containsString:@"ad "] || [combined containsString:@"promo"] || [combined containsString:@"sale"]) {
+                    [combined containsString:@"fastdecrypt"] || [combined containsString:@"sale"]) {
                     if (completion) completion();
                     return;
                 }
@@ -634,18 +534,13 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     }
 }
 
-#pragma mark - Hook View Controllers (Auto-Click Save & Install HUD)
+#pragma mark - Hook View Controllers (Auto-Click Save on Export)
 
 static void (*orig_UIViewController_viewDidAppear)(UIViewController *, SEL, BOOL);
 
 static void hook_UIViewController_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     if (orig_UIViewController_viewDidAppear) {
         orig_UIViewController_viewDidAppear(self, _cmd, animated);
-    }
-
-    UIWindow *window = self.view.window ?: [UIApplication sharedApplication].windows.firstObject;
-    if (window) {
-        [[AMBatchLyricsHUD sharedHUD] installFloatingButtonOnWindow:window];
     }
 
     NSString *className = NSStringFromClass([self class]);
@@ -700,6 +595,12 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
 
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
+        class_addMethod(textInputClass, @selector(am_fillCurrentVerse), (IMP)am_fillCurrentVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_prevVerse), (IMP)am_prevVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_nextVerse), (IMP)am_nextVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_dismissKeyboard), (IMP)am_dismissKeyboard, "v@:");
+        class_addMethod(textInputClass, @selector(am_openLyricsModal), (IMP)am_openLyricsModal, "v@:");
+
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
