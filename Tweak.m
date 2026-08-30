@@ -583,7 +583,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Safe-Area & Orientation Aware)
+#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar
 
 @interface AMMinimalLyricsBar : UIView
 @property (nonatomic, weak) UIViewController *targetVC;
@@ -965,7 +965,7 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
         }
     }
 
-    if (tv && tv.inputAccessoryView == nil) {
+    if (tv) {
         AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:self];
         tv.inputAccessoryView = bar;
     }
@@ -1015,15 +1015,45 @@ static void hook_AudioServicesPlaySystemSoundWithCompletion(SystemSoundID inSyst
     if (inCompletionBlock) inCompletionBlock();
 }
 
-// 2. Hook UIWindow makeKeyAndVisible & setHidden (Annihilate 10-Second Crack Popup Window)
+// Hook UIFeedbackGenerator / UIImpactFeedbackGenerator / UINotificationFeedbackGenerator
+static void (*orig_UIImpactFeedbackGenerator_impactOccurred)(UIImpactFeedbackGenerator *, SEL);
+static void hook_UIImpactFeedbackGenerator_impactOccurred(UIImpactFeedbackGenerator *self, SEL _cmd) {
+    // Suppress unwanted crack impact vibrations
+}
+
+static void (*orig_UINotificationFeedbackGenerator_notificationOccurred)(UINotificationFeedbackGenerator *, SEL, UINotificationFeedbackType);
+static void hook_UINotificationFeedbackGenerator_notificationOccurred(UINotificationFeedbackGenerator *self, SEL _cmd, UINotificationFeedbackType type) {
+    // Suppress unwanted crack notification vibrations
+}
+
+// 2. Hook UIWindow makeKeyAndVisible & setHidden (NEVER hide keyboard / text system windows!)
 static void (*orig_UIWindow_makeKeyAndVisible)(UIWindow *, SEL);
 
 static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
-    if (self.windowLevel >= UIWindowLevelAlert) {
-        self.hidden = YES;
-        self.frame = CGRectZero;
+    NSString *clsName = NSStringFromClass([self class]);
+    // ALWAYS preserve keyboard and text system windows!
+    if ([clsName containsString:@"Keyboard"] || 
+        [clsName containsString:@"TextEffects"] || 
+        [clsName containsString:@"InputSet"] ||
+        [clsName containsString:@"Remote"] ||
+        [clsName containsString:@"Interactive"]) {
+        if (orig_UIWindow_makeKeyAndVisible) {
+            orig_UIWindow_makeKeyAndVisible(self, _cmd);
+        }
         return;
     }
+
+    if (self.windowLevel >= UIWindowLevelAlert) {
+        // Inspect rootViewController / views to ensure it's crack overlay
+        UIViewController *root = self.rootViewController;
+        NSString *rootName = root ? NSStringFromClass([root class]) : @"";
+        if ([rootName containsString:@"5qG"] || [rootName containsString:@"fQG"] || [rootName containsString:@"Blatant"] || [rootName containsString:@"Alert"]) {
+            self.hidden = YES;
+            self.frame = CGRectZero;
+            return;
+        }
+    }
+
     if (orig_UIWindow_makeKeyAndVisible) {
         orig_UIWindow_makeKeyAndVisible(self, _cmd);
     }
@@ -1032,8 +1062,24 @@ static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
 static void (*orig_UIWindow_setHidden)(UIWindow *, SEL, BOOL);
 
 static void hook_UIWindow_setHidden(UIWindow *self, SEL _cmd, BOOL hidden) {
+    NSString *clsName = NSStringFromClass([self class]);
+    if ([clsName containsString:@"Keyboard"] || 
+        [clsName containsString:@"TextEffects"] || 
+        [clsName containsString:@"InputSet"] ||
+        [clsName containsString:@"Remote"] ||
+        [clsName containsString:@"Interactive"]) {
+        if (orig_UIWindow_setHidden) {
+            orig_UIWindow_setHidden(self, _cmd, hidden);
+        }
+        return;
+    }
+
     if (!hidden && self.windowLevel >= UIWindowLevelAlert) {
-        hidden = YES;
+        UIViewController *root = self.rootViewController;
+        NSString *rootName = root ? NSStringFromClass([root class]) : @"";
+        if ([rootName containsString:@"5qG"] || [rootName containsString:@"fQG"] || [rootName containsString:@"Blatant"]) {
+            hidden = YES;
+        }
     }
     if (orig_UIWindow_setHidden) {
         orig_UIWindow_setHidden(self, _cmd, hidden);
@@ -1177,7 +1223,26 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         {"AudioServicesPlaySystemSoundWithCompletion", (void *)hook_AudioServicesPlaySystemSoundWithCompletion, (void **)&orig_AudioServicesPlaySystemSoundWithCompletion}
     }, 3);
 
-    // 2. Hook UIWindow to destroy 10-second alert window
+    // 2. Hook UIFeedbackGenerator / UIImpactFeedbackGenerator / UINotificationFeedbackGenerator
+    Class impactClass = objc_getClass("UIImpactFeedbackGenerator");
+    if (impactClass) {
+        Method m = class_getInstanceMethod(impactClass, @selector(impactOccurred));
+        if (m) {
+            orig_UIImpactFeedbackGenerator_impactOccurred = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
+        }
+    }
+
+    Class notifClass = objc_getClass("UINotificationFeedbackGenerator");
+    if (notifClass) {
+        Method m = class_getInstanceMethod(notifClass, @selector(notificationOccurred:));
+        if (m) {
+            orig_UINotificationFeedbackGenerator_notificationOccurred = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)hook_UINotificationFeedbackGenerator_notificationOccurred);
+        }
+    }
+
+    // 3. Hook UIWindow (Exempting keyboard and text system windows)
     Class windowClass = [UIWindow class];
     Method makeKeyMethod = class_getInstanceMethod(windowClass, @selector(makeKeyAndVisible));
     if (makeKeyMethod) {
@@ -1191,7 +1256,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(setHiddenMethod, (IMP)hook_UIWindow_setHidden);
     }
 
-    // 3. Hook UIActivityViewController
+    // 4. Hook UIActivityViewController
     Class activityVCClass = [UIActivityViewController class];
     Method initActivityMethod = class_getInstanceMethod(activityVCClass, @selector(initWithActivityItems:applicationActivities:));
     if (initActivityMethod) {
@@ -1199,7 +1264,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
-    // 4. Hook UIViewController viewDidAppear & presentViewController
+    // 5. Hook UIViewController viewDidAppear & presentViewController
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
@@ -1213,7 +1278,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 
-    // 5. Hook UIAlertController factory
+    // 6. Hook UIAlertController factory
     Class alertClass = objc_getClass("UIAlertController");
     if (alertClass) {
         Method alertCreateMethod = class_getClassMethod(alertClass, @selector(alertControllerWithTitle:message:preferredStyle:));
@@ -1223,7 +1288,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         }
     }
 
-    // 6. Hook UIApplication openURL
+    // 7. Hook UIApplication openURL
     Class appClass = [UIApplication class];
     Method openURLMethod = class_getInstanceMethod(appClass, @selector(openURL:));
     if (openURLMethod) {
@@ -1237,7 +1302,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
     }
 
-    // 7. Hook TextInputVC
+    // 8. Hook TextInputVC
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
