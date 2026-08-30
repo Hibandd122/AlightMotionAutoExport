@@ -1,9 +1,9 @@
 Package: com.alightmotion.autoexport
 Name: AlightMotionAutoExport
 Depends: mobilesubstrate
-Version: 1.2.0
+Version: 1.5.0
 Architecture: iphoneos-arm
-Description: Auto-save export, notify, add 120 FPS, and import projects from share links
+Description: Tự động lưu video xuất vào Cuộn Camera và Công cụ tự động điền hàng loạt lời bài hát (Batch Lyrics) vào Text Layers
 Maintainer: Cracked-2m96
 Author: Cracked-2m96
 Section: Tweaks
