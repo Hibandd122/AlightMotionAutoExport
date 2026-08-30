@@ -67,10 +67,64 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Batch Lyrics Inserter Controller & Engine
+#pragma mark - Lyrics Queue Manager (Smart Auto-Paste Helper)
+
+@interface AMLyricsQueueManager : NSObject
+@property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
+@property (nonatomic, assign) NSUInteger currentIndex;
++ (instancetype)sharedManager;
+- (void)loadLyrics:(NSArray<NSString *> *)lines;
+- (NSString *)currentLineText;
+- (NSString *)consumeNextLineText;
+- (BOOL)hasNextLine;
+@end
+
+@implementation AMLyricsQueueManager
+
++ (instancetype)sharedManager {
+    static AMLyricsQueueManager *mgr = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mgr = [[self alloc] init];
+        mgr.lyricsLines = [NSMutableArray array];
+        mgr.currentIndex = 0;
+    });
+    return mgr;
+}
+
+- (void)loadLyrics:(NSArray<NSString *> *)lines {
+    [self.lyricsLines removeAllObjects];
+    if (lines) {
+        [self.lyricsLines addObjectsFromArray:lines];
+    }
+    self.currentIndex = 0;
+}
+
+- (NSString *)currentLineText {
+    if (self.currentIndex < self.lyricsLines.count) {
+        return self.lyricsLines[self.currentIndex];
+    }
+    return nil;
+}
+
+- (NSString *)consumeNextLineText {
+    if (self.currentIndex < self.lyricsLines.count) {
+        NSString *line = self.lyricsLines[self.currentIndex];
+        self.currentIndex++;
+        return line;
+    }
+    return nil;
+}
+
+- (BOOL)hasNextLine {
+    return self.currentIndex < self.lyricsLines.count;
+}
+
+@end
+
+#pragma mark - Batch Lyrics Inserter Modal View Controller
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
-@property (nonatomic, strong) UIView *containerCard;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, strong) UILabel *lineCountLabel;
 @property (nonatomic, strong) UIButton *pasteButton;
@@ -78,7 +132,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 @property (nonatomic, strong) UIButton *applyButton;
 @property (nonatomic, strong) UIButton *closeButton;
 @property (nonatomic, weak) UIViewController *parentPresenter;
-@property (nonatomic, strong) NSLayoutConstraint *containerBottomConstraint;
 @end
 
 @implementation AMBatchLyricsViewController
@@ -87,7 +140,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.07 blue:0.10 alpha:0.98];
 
-    // Tap outside background to dismiss keyboard
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
     tap.cancelsTouchesInView = NO;
     [self.view addGestureRecognizer:tap];
@@ -96,7 +148,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self setupTextView];
     [self setupButtons];
 
-    // Register keyboard notifications
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
 }
@@ -114,7 +165,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Mỗi dòng là 1 câu hát. Tweak sẽ tự động điền lần lượt vào từng Text Layer trên Timeline theo thứ tự.";
+    subtitleLabel.text = @"Mỗi dòng là 1 câu hát. Hệ thống sẽ lưu vào hàng đợi và tự động điền lần lượt vào từng Text Layer theo thứ tự.";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -138,7 +189,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.textView.delegate = self;
     self.textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    // Setup inputAccessoryView (Toolbar on top of iOS keyboard)
     UIToolbar *toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
     toolbar.barStyle = UIBarStyleBlack;
     toolbar.translucent = YES;
@@ -195,7 +245,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     CGFloat applyW = width - applyX - 70;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Áp Dụng" forState:UIControlStateNormal];
+    [self.applyButton setTitle:@"⚡ Nạp Vào Tool" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.applyButton.layer.cornerRadius = 10.0;
@@ -295,159 +345,64 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         return;
     }
 
-    NSUInteger replacedCount = [self executeLyricsBatchReplacement:lines];
+    // 1. Load lyrics into Queue Manager
+    [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất!"
-                                                                   message:[NSString stringWithFormat:@"Đã tự động cập nhật thành công %lu câu hát vào %lu Text Layer trên Timeline!", (unsigned long)lines.count, (unsigned long)replacedCount]
+    // 2. Direct XML project search & batch replace
+    NSUInteger xmlReplaced = [self updateRecentProjectXMLFilesWithLines:lines];
+
+    NSString *msg;
+    if (xmlReplaced > 0) {
+        msg = [NSString stringWithFormat:@"Đã cập nhật trực tiếp %lu câu hát vào File Project XML!\nĐồng thời đã nạp %lu câu vào hàng đợi thông minh.", (unsigned long)xmlReplaced, (unsigned long)lines.count];
+    } else {
+        msg = [NSString stringWithFormat:@"Đã nạp thành công %lu câu hát vào Trợ Lý Bắt Beat!\n\n👉 Giờ đây mỗi khi bạn bấm vào bất kỳ Text Layer nào trên Timeline để sửa, thanh công cụ sẽ hiện nút [⚡ Điền Câu #X] để điền ngay lập tức chỉ với 1 chạm!", (unsigned long)lines.count];
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎉 Đã Nạp Lời Thành Công!"
+                                                                   message:msg
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Tuyệt vời" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Bắt đầu làm Beat" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self dismissModal];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-#pragma mark - Core Text Replacement Engine
-
-- (NSUInteger)executeLyricsBatchReplacement:(NSArray<NSString *> *)lines {
-    __block NSUInteger count = 0;
-    
-    // Find active ProjectHolder from View Controllers
-    id holder = [self findActiveProjectHolder];
-    if (holder) {
-        // Traverse root scene and element structure in ProjectHolder
-        count = [self updateTextInProjectHolder:holder withLines:lines];
-    }
-    
-    // Also scan recent XML scene project files in container for backup / direct sync
-    NSUInteger xmlReplaced = [self updateRecentProjectXMLFilesWithLines:lines];
-    if (count == 0 && xmlReplaced > 0) {
-        count = xmlReplaced;
-    }
-    
-    if (count == 0) {
-        count = lines.count; // Fallback estimate
-    }
-
-    return count;
-}
-
-- (id)findActiveProjectHolder {
-    UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
-    UIViewController *root = window.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
-    }
-
-    NSMutableArray *queue = [NSMutableArray arrayWithObject:root];
-    while (queue.count > 0) {
-        UIViewController *vc = queue.firstObject;
-        [queue removeObjectAtIndex:0];
-
-        if ([vc respondsToSelector:NSSelectorFromString(@"holder")]) {
-            IMP imp = [vc methodForSelector:NSSelectorFromString(@"holder")];
-            id (*getHolder)(id, SEL) = (void *)imp;
-            id h = getHolder(vc, NSSelectorFromString(@"holder"));
-            if (h) return h;
-        }
-
-        [queue addObjectsFromArray:vc.childViewControllers];
-    }
-    return nil;
-}
-
-- (NSUInteger)updateTextInProjectHolder:(id)holder withLines:(NSArray<NSString *> *)lines {
-    NSUInteger updated = 0;
-    if (!holder) return 0;
-
-    // Use Objective-C runtime ivar inspection to locate scene elements
-    unsigned int ivarCount = 0;
-    Ivar *ivars = class_copyIvarList([holder class], &ivarCount);
-    for (unsigned int i = 0; i < ivarCount; i++) {
-        const char *name = ivar_getName(ivars[i]);
-        if (name && (strcmp(name, "_rootScene") == 0 || strcmp(name, "originalScene") == 0 || strcmp(name, "elements") == 0)) {
-            id sceneObj = object_getIvar(holder, ivars[i]);
-            if (sceneObj) {
-                updated += [self recursivelyUpdateTextInObject:sceneObj withLines:lines currentIndex:&updated];
-            }
-        }
-    }
-    free(ivars);
-
-    // Trigger save / refresh debouncer in ProjectHolder
-    if ([holder respondsToSelector:NSSelectorFromString(@"pendingSave")]) {
-        @try {
-            [holder setValue:@(YES) forKey:@"pendingSave"];
-        } @catch (NSException *e) {}
-    }
-
-    return updated;
-}
-
-- (NSUInteger)recursivelyUpdateTextInObject:(id)obj withLines:(NSArray<NSString *> *)lines currentIndex:(NSUInteger *)currentIdx {
-    if (!obj || *currentIdx >= lines.count) return 0;
-    NSUInteger count = 0;
-
-    if ([obj isKindOfClass:[NSArray class]]) {
-        for (id child in (NSArray *)obj) {
-            count += [self recursivelyUpdateTextInObject:child withLines:lines currentIndex:currentIdx];
-        }
-        return count;
-    }
-
-    if ([obj isKindOfClass:[NSDictionary class]]) {
-        for (id key in (NSDictionary *)obj) {
-            id child = [(NSDictionary *)obj objectForKey:key];
-            count += [self recursivelyUpdateTextInObject:child withLines:lines currentIndex:currentIdx];
-        }
-        return count;
-    }
-
-    // Check if object has text property
-    if ([obj respondsToSelector:@selector(setText:)] && [obj respondsToSelector:@selector(text)]) {
-        NSString *currentText = [obj performSelector:@selector(text)];
-        if (currentText && [currentText isKindOfClass:[NSString class]]) {
-            NSString *newLine = lines[*currentIdx];
-            [obj performSelector:@selector(setText:) withObject:newLine];
-            (*currentIdx)++;
-            return 1;
-        }
-    }
-
-    return count;
-}
-
 - (NSUInteger)updateRecentProjectXMLFilesWithLines:(NSArray<NSString *> *)lines {
     NSUInteger count = 0;
-    NSString *docPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    if (!docPath) return 0;
+    NSArray *searchPaths = @[
+        NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject ?: @"",
+        NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject ?: @""
+    ];
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:docPath];
-    NSString *file;
-    while ((file = [enumerator nextObject])) {
-        if ([file.pathExtension.lowercaseString isEqualToString:@"xml"]) {
-            NSString *fullPath = [docPath stringByAppendingPathComponent:file];
-            NSError *err = nil;
-            NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:&err];
-            if (content && [content containsString:@"com.alightcreative.motion.text"]) {
-                NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"<property name=\"text\" value=\"([^\"]*)\""
-                                                                                       options:0
-                                                                                         error:nil];
-                NSArray *matches = [regex matchesInString:content options:0 range:NSMakeRange(0, content.length)];
-                if (matches.count > 0) {
-                    NSMutableString *mutableContent = [content mutableCopy];
-                    // Replace backwards to preserve indices
-                    for (NSInteger i = (NSInteger)matches.count - 1; i >= 0; i--) {
-                        if (i < (NSInteger)lines.count) {
-                            NSTextCheckingResult *m = matches[i];
-                            NSRange valRange = [m rangeAtIndex:1];
-                            if (valRange.location != NSNotFound) {
-                                [mutableContent replaceCharactersInRange:valRange withString:lines[i]];
-                                count++;
+    for (NSString *baseDir in searchPaths) {
+        if (baseDir.length == 0) continue;
+        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:baseDir];
+        NSString *file;
+        while ((file = [enumerator nextObject])) {
+            if ([file.pathExtension.lowercaseString isEqualToString:@"xml"] || [file.pathExtension.lowercaseString isEqualToString:@"amproject"]) {
+                NSString *fullPath = [baseDir stringByAppendingPathComponent:file];
+                NSError *err = nil;
+                NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:&err];
+                if (content && ([content containsString:@"com.alightcreative.motion.text"] || [content containsString:@"<shape"])) {
+                    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"<property name=\"text\" value=\"([^\"]*)\""
+                                                                                           options:0
+                                                                                             error:nil];
+                    NSArray *matches = [regex matchesInString:content options:0 range:NSMakeRange(0, content.length)];
+                    if (matches.count > 0) {
+                        NSMutableString *mutableContent = [content mutableCopy];
+                        for (NSInteger i = (NSInteger)matches.count - 1; i >= 0; i--) {
+                            if (i < (NSInteger)lines.count) {
+                                NSTextCheckingResult *m = matches[i];
+                                NSRange valRange = [m rangeAtIndex:1];
+                                if (valRange.location != NSNotFound) {
+                                    [mutableContent replaceCharactersInRange:valRange withString:lines[i]];
+                                    count++;
+                                }
                             }
                         }
+                        [mutableContent writeToFile:fullPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
                     }
-                    [mutableContent writeToFile:fullPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
                 }
             }
         }
@@ -456,6 +411,146 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 @end
+
+#pragma mark - Hook TextInputVC (Auto-Paste Next Verse on Tap)
+
+static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+
+static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    if (orig_TextInputVC_viewDidAppear) {
+        orig_TextInputVC_viewDidAppear(self, _cmd, animated);
+    }
+
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) return;
+
+    // Find inputTextView in TextInputVC
+    UITextView *tv = nil;
+    if ([self respondsToSelector:@selector(inputTextView)]) {
+        tv = [self valueForKey:@"inputTextView"];
+    }
+
+    if (!tv) {
+        for (UIView *sub in self.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        // Install Smart Lyrics Accessory Bar on top of keyboard
+        UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
+        bar.barStyle = UIBarStyleBlack;
+        bar.translucent = YES;
+        bar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+
+        NSUInteger curIdx = mgr.currentIndex + 1;
+        NSString *btnTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curIdx, (unsigned long)mgr.lyricsLines.count];
+
+        UIBarButtonItem *autoFillItem = [[UIBarButtonItem alloc] initWithTitle:btnTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
+        UIBarButtonItem *prevItem = [[UIBarButtonItem alloc] initWithTitle:@"⏪" style:UIBarButtonItemStylePlain target:self action:@selector(am_prevVerse)];
+        UIBarButtonItem *nextItem = [[UIBarButtonItem alloc] initWithTitle:@"⏩" style:UIBarButtonItemStylePlain target:self action:@selector(am_nextVerse)];
+        UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+        UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Xong" style:UIBarButtonItemStylePlain target:self action:@selector(am_dismissKeyboard)];
+
+        [bar setItems:@[prevItem, nextItem, autoFillItem, flex, doneItem]];
+        tv.inputAccessoryView = bar;
+        [tv reloadInputViews];
+    }
+}
+
+// Category methods added dynamically to TextInputVC
+static void am_autoFillCurrentVerse(UIViewController *self, SEL _cmd) {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    NSString *line = [mgr currentLineText];
+    if (!line) return;
+
+    UITextView *tv = nil;
+    if ([self respondsToSelector:@selector(inputTextView)]) {
+        tv = [self valueForKey:@"inputTextView"];
+    }
+    if (!tv) {
+        for (UIView *sub in self.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        tv.text = line;
+        // Trigger text view delegate
+        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+            [tv.delegate textViewDidChange:tv];
+        }
+        @try {
+            [self setValue:line forKey:@"appearText"];
+        } @catch (NSException *e) {}
+
+        // Advance queue
+        [mgr consumeNextLineText];
+
+        // Refresh toolbar title for next verse
+        if (tv.inputAccessoryView && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
+            UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
+            NSMutableArray *items = [bar.items mutableCopy];
+            if (items.count >= 3) {
+                NSUInteger nextNum = mgr.currentIndex + 1;
+                NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)nextNum, (unsigned long)mgr.lyricsLines.count];
+                UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
+                items[2] = newItem;
+                [bar setItems:items];
+            }
+        }
+    }
+}
+
+static void am_prevVerse(UIViewController *self, SEL _cmd) {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex > 0) {
+        mgr.currentIndex--;
+    }
+    // Update title
+    UITextView *tv = [self valueForKey:@"inputTextView"];
+    if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
+        UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
+        NSMutableArray *items = [bar.items mutableCopy];
+        if (items.count >= 3) {
+            NSUInteger curNum = mgr.currentIndex + 1;
+            NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curNum, (unsigned long)mgr.lyricsLines.count];
+            UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
+            items[2] = newItem;
+            [bar setItems:items];
+        }
+    }
+}
+
+static void am_nextVerse(UIViewController *self, SEL _cmd) {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
+        mgr.currentIndex++;
+    }
+    // Update title
+    UITextView *tv = [self valueForKey:@"inputTextView"];
+    if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
+        UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
+        NSMutableArray *items = [bar.items mutableCopy];
+        if (items.count >= 3) {
+            NSUInteger curNum = mgr.currentIndex + 1;
+            NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curNum, (unsigned long)mgr.lyricsLines.count];
+            UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
+            items[2] = newItem;
+            [bar setItems:items];
+        }
+    }
+}
+
+static void am_dismissKeyboard(UIViewController *self, SEL _cmd) {
+    [self.view endEditing:YES];
+}
 
 #pragma mark - Floating Tool Button Manager
 
@@ -564,8 +659,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             NSString *message = alert.message ?: @"";
             NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message].lowercaseString;
 
-            // Allow our own Batch Lyrics and Auto-Save alerts
-            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"];
+            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"] || [title containsString:@"Đã Nạp"];
 
             if (!isOurAlert) {
                 if ([combined containsString:@"telegram"] || [combined containsString:@"t.me"] || [combined containsString:@"blatant"] ||
@@ -573,7 +667,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
                     [combined containsString:@"subscribe"] || [combined containsString:@"quảng cáo"] || [combined containsString:@"channel"] ||
                     [combined containsString:@"ad "] || [combined containsString:@"promo"] || [combined containsString:@"sale"]) {
                     if (completion) completion();
-                    return; // Silently block the popup!
+                    return; // Silently suppress popup!
                 }
             }
         }
@@ -590,7 +684,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             [className containsString:@"WatermarkPopup"] ||
             [className containsString:@"SKStoreProductViewController"]) {
             if (completion) completion();
-            return; // Block ad/promo screen presentation
+            return;
         }
     }
 
@@ -664,5 +758,20 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
     if (presentVCMethod) {
         orig_UIViewController_presentViewController = (void *)method_getImplementation(presentVCMethod);
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
+    }
+
+    // 4. Swizzle TextInputVC để hỗ trợ điền nhanh từng câu hát
+    Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
+    if (textInputClass) {
+        class_addMethod(textInputClass, @selector(am_autoFillCurrentVerse), (IMP)am_autoFillCurrentVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_prevVerse), (IMP)am_prevVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_nextVerse), (IMP)am_nextVerse, "v@:");
+        class_addMethod(textInputClass, @selector(am_dismissKeyboard), (IMP)am_dismissKeyboard, "v@:");
+
+        Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
+        if (textAppearMethod) {
+            orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
+            method_setImplementation(textAppearMethod, (IMP)hook_TextInputVC_viewDidAppear);
+        }
     }
 }
