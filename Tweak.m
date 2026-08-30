@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Photos/Photos.h>
 #import <UserNotifications/UserNotifications.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <objc/runtime.h>
 
 #pragma mark - Notification Helper
@@ -18,11 +19,11 @@ static void AMNotifyUser(NSString *title, NSString *body) {
                                                                   withCompletionHandler:nil];
 }
 
-#pragma mark - Settings & Preferences Storage
+#pragma mark - Settings Storage
 
 static BOOL AMIsAutoSaveEnabled(void) {
     NSNumber *val = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_AutoSaveToPhotos"];
-    if (val == nil) return YES; // Default ON
+    if (val == nil) return YES;
     return [val boolValue];
 }
 
@@ -87,6 +88,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 @property (nonatomic, assign) NSUInteger currentIndex;
 + (instancetype)sharedManager;
 - (void)loadLyrics:(NSArray<NSString *> *)lines;
+- (void)clearLyrics;
 - (NSString *)currentLineText;
 - (NSString *)consumeNextLineText;
 - (BOOL)hasNextLine;
@@ -110,6 +112,11 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     if (lines) {
         [self.lyricsLines addObjectsFromArray:lines];
     }
+    self.currentIndex = 0;
+}
+
+- (void)clearLyrics {
+    [self.lyricsLines removeAllObjects];
     self.currentIndex = 0;
 }
 
@@ -372,7 +379,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     // Header
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, w - 40, 28)];
-    titleLabel.text = @"⚙️ Cài Đặt Alight Motion Mod";
+    titleLabel.text = @"⚙️ Cài Đặt Alight Motion Pro";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     [self.view addSubview:titleLabel];
@@ -624,16 +631,26 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     }
 
     if (tv) {
+        // Complete, deep text injection to ensure internal Swift / KVO updates
         tv.text = line;
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
         }
+        if ([tv.delegate respondsToSelector:@selector(textView:shouldChangeTextInRange:replacementText:)]) {
+            [tv.delegate textView:tv shouldChangeTextInRange:NSMakeRange(0, tv.text.length) replacementText:line];
+        }
+        [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
+
         @try {
             [self.targetVC setValue:line forKey:@"appearText"];
         } @catch (NSException *e) {}
 
+        // Advance to next verse for next layer
         [mgr consumeNextLineText];
         [self refreshDisplay];
+
+        // Haptic feedback
+        AudioServicesPlaySystemSound(1519);
     }
 }
 
