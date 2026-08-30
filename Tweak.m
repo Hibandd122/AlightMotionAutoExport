@@ -482,7 +482,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [card3 addSubview:l3];
 
     UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
-    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã chặn 100% Popup & Kênh Telegram quảng cáo";
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Timer 10s quảng cáo";
     l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
     l3Sub.numberOfLines = 3;
@@ -603,7 +603,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [capsule addSubview:close];
     bar.closeBtn = close;
 
-    // Quick Menu Button [📋] (Nạp mới / Xóa / Reset)
     UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
     menu.frame = CGRectMake(capW - 64.0, 3.0, 28.0, 28.0);
     [menu setTitle:@"📋" forState:UIControlStateNormal];
@@ -884,7 +883,7 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 }
 
-#pragma mark - 5-Layer Bulletproof Anti-Telegram & Anti-Ads Filter
+#pragma mark - 6-Layer Bulletproof Anti-Telegram, Anti-Ads & 10s Timer Annihilator
 
 static BOOL AMIsForbiddenString(NSString *str) {
     if (!str || str.length == 0) return NO;
@@ -896,10 +895,38 @@ static BOOL AMIsForbiddenString(NSString *str) {
            [low containsString:@"fastdecrypt"] ||
            [low containsString:@"crack"] ||
            [low containsString:@"unlocked by"] ||
-           [low containsString:@"quảng cáo"];
+           [low containsString:@"quảng cáo"] ||
+           [low containsString:@"wait"] ||
+           [low containsString:@"10s"] ||
+           [low containsString:@"countdown"];
 }
 
-// 1. Hook UIAlertController creation
+// 1. Hook UIWindow makeKeyAndVisible & setHidden (Annihilate 10-Second Crack Popup Window)
+static void (*orig_UIWindow_makeKeyAndVisible)(UIWindow *, SEL);
+
+static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
+    if (self.windowLevel >= UIWindowLevelAlert) {
+        self.hidden = YES;
+        self.frame = CGRectZero;
+        return; // Destroy the alert window completely!
+    }
+    if (orig_UIWindow_makeKeyAndVisible) {
+        orig_UIWindow_makeKeyAndVisible(self, _cmd);
+    }
+}
+
+static void (*orig_UIWindow_setHidden)(UIWindow *, SEL, BOOL);
+
+static void hook_UIWindow_setHidden(UIWindow *self, SEL _cmd, BOOL hidden) {
+    if (!hidden && self.windowLevel >= UIWindowLevelAlert) {
+        hidden = YES; // Force keep hidden
+    }
+    if (orig_UIWindow_setHidden) {
+        orig_UIWindow_setHidden(self, _cmd, hidden);
+    }
+}
+
+// 2. Hook UIAlertController creation
 static UIAlertController *(*orig_UIAlertController_alertControllerWithTitle)(id, SEL, NSString *, NSString *, UIAlertControllerStyle);
 
 static UIAlertController *hook_UIAlertController_alertControllerWithTitle(id self, SEL _cmd, NSString *title, NSString *message, UIAlertControllerStyle preferredStyle) {
@@ -909,7 +936,7 @@ static UIAlertController *hook_UIAlertController_alertControllerWithTitle(id sel
     return orig_UIAlertController_alertControllerWithTitle(self, _cmd, title, message, preferredStyle);
 }
 
-// 2. Hook UIViewController presentViewController
+// 3. Hook UIViewController presentViewController
 static void (*orig_UIViewController_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
 
 static void hook_UIViewController_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vc, BOOL animated, void (^completion)(void)) {
@@ -950,7 +977,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     }
 }
 
-// 3. Hook UIApplication openURL (Block opening telegram links externally)
+// 4. Hook UIApplication openURL (Block opening telegram links externally)
 static BOOL (*orig_UIApplication_openURL)(UIApplication *, SEL, NSURL *);
 
 static BOOL hook_UIApplication_openURL(UIApplication *self, SEL _cmd, NSURL *url) {
@@ -975,7 +1002,7 @@ static void hook_UIApplication_openURL_options_completionHandler(UIApplication *
     }
 }
 
-// 4. Hook UIView addSubview (Remove any view displaying telegram strings)
+// 5. Hook UIView addSubview (Remove any view displaying telegram/countdown strings)
 static void (*orig_UIView_addSubview)(UIView *, SEL, UIView *);
 
 static void hook_UIView_addSubview(UIView *self, SEL _cmd, UIView *subview) {
@@ -1057,7 +1084,21 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
                               completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
     });
 
-    // 1. Hook UIActivityViewController
+    // 1. Hook UIWindow to destroy 10-second alert window
+    Class windowClass = [UIWindow class];
+    Method makeKeyMethod = class_getInstanceMethod(windowClass, @selector(makeKeyAndVisible));
+    if (makeKeyMethod) {
+        orig_UIWindow_makeKeyAndVisible = (void *)method_getImplementation(makeKeyMethod);
+        method_setImplementation(makeKeyMethod, (IMP)hook_UIWindow_makeKeyAndVisible);
+    }
+
+    Method setHiddenMethod = class_getInstanceMethod(windowClass, @selector(setHidden:));
+    if (setHiddenMethod) {
+        orig_UIWindow_setHidden = (void *)method_getImplementation(setHiddenMethod);
+        method_setImplementation(setHiddenMethod, (IMP)hook_UIWindow_setHidden);
+    }
+
+    // 2. Hook UIActivityViewController
     Class activityVCClass = [UIActivityViewController class];
     Method initActivityMethod = class_getInstanceMethod(activityVCClass, @selector(initWithActivityItems:applicationActivities:));
     if (initActivityMethod) {
@@ -1065,7 +1106,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
-    // 2. Hook UIViewController viewDidAppear & presentViewController
+    // 3. Hook UIViewController viewDidAppear & presentViewController
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
@@ -1079,7 +1120,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 
-    // 3. Hook UIAlertController factory
+    // 4. Hook UIAlertController factory
     Class alertClass = objc_getClass("UIAlertController");
     if (alertClass) {
         Method alertCreateMethod = class_getClassMethod(alertClass, @selector(alertControllerWithTitle:message:preferredStyle:));
@@ -1089,7 +1130,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         }
     }
 
-    // 4. Hook UIApplication openURL
+    // 5. Hook UIApplication openURL
     Class appClass = [UIApplication class];
     Method openURLMethod = class_getInstanceMethod(appClass, @selector(openURL:));
     if (openURLMethod) {
@@ -1103,7 +1144,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
     }
 
-    // 5. Hook UIView addSubview
+    // 6. Hook UIView addSubview
     Class viewClass = [UIView class];
     Method addSubviewMethod = class_getInstanceMethod(viewClass, @selector(addSubview:));
     if (addSubviewMethod) {
@@ -1111,7 +1152,7 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(addSubviewMethod, (IMP)hook_UIView_addSubview);
     }
 
-    // 6. Hook TextInputVC
+    // 7. Hook TextInputVC
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
