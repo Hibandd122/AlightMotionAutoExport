@@ -549,6 +549,56 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
+#pragma mark - Hook Present View Controller (Block Ads, Crack Notices & Promos)
+
+static void (*orig_UIViewController_presentViewController)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
+
+static void hook_UIViewController_presentViewController(UIViewController *self, SEL _cmd, UIViewController *vc, BOOL animated, void (^completion)(void)) {
+    if (vc) {
+        NSString *className = NSStringFromClass([vc class]);
+
+        // 1. Block UIAlertController if it contains advertisements, crack notices, telegram channels, or upgrade promos
+        if ([vc isKindOfClass:[UIAlertController class]]) {
+            UIAlertController *alert = (UIAlertController *)vc;
+            NSString *title = alert.title ?: @"";
+            NSString *message = alert.message ?: @"";
+            NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message].lowercaseString;
+
+            // Allow our own Batch Lyrics and Auto-Save alerts
+            BOOL isOurAlert = [title containsString:@"Hoàn Tất"] || [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Batch Lyrics"];
+
+            if (!isOurAlert) {
+                if ([combined containsString:@"telegram"] || [combined containsString:@"t.me"] || [combined containsString:@"blatant"] ||
+                    [combined containsString:@"crack"] || [combined containsString:@"unlocked"] || [combined containsString:@"mod"] ||
+                    [combined containsString:@"subscribe"] || [combined containsString:@"quảng cáo"] || [combined containsString:@"channel"] ||
+                    [combined containsString:@"ad "] || [combined containsString:@"promo"] || [combined containsString:@"sale"]) {
+                    if (completion) completion();
+                    return; // Silently block the popup!
+                }
+            }
+        }
+
+        // 2. Block Ad SDKs & In-app upsell / subscription / trial popups
+        if ([className containsString:@"GAD"] || 
+            [className containsString:@"IronSource"] || 
+            [className containsString:@"Vungle"] || 
+            [className containsString:@"StoreSubscription"] || 
+            [className containsString:@"StorePromo"] || 
+            [className containsString:@"StoreAnnualSale"] || 
+            [className containsString:@"StoreTrial"] || 
+            [className containsString:@"TrialEndSoon"] || 
+            [className containsString:@"WatermarkPopup"] ||
+            [className containsString:@"SKStoreProductViewController"]) {
+            if (completion) completion();
+            return; // Block ad/promo screen presentation
+        }
+    }
+
+    if (orig_UIViewController_presentViewController) {
+        orig_UIViewController_presentViewController(self, _cmd, vc, animated, completion);
+    }
+}
+
 #pragma mark - Hook View Controllers (Auto-Click Save & Install HUD)
 
 static void (*orig_UIViewController_viewDidAppear)(UIViewController *, SEL, BOOL);
@@ -602,11 +652,17 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(initActivityMethod, (IMP)hook_UIActivityViewController_initWithActivityItems);
     }
 
-    // 3. Swizzle UIViewController viewDidAppear để tự động nhấn lưu & gắn nút công cụ Batch Lyrics
+    // 3. Swizzle UIViewController để chặn popup quảng cáo, thông báo mod & gắn nút Batch Lyrics
     Class vcClass = objc_getClass("UIViewController");
     Method viewDidAppearMethod = class_getInstanceMethod(vcClass, @selector(viewDidAppear:));
     if (viewDidAppearMethod) {
         orig_UIViewController_viewDidAppear = (void *)method_getImplementation(viewDidAppearMethod);
         method_setImplementation(viewDidAppearMethod, (IMP)hook_UIViewController_viewDidAppear);
+    }
+
+    Method presentVCMethod = class_getInstanceMethod(vcClass, @selector(presentViewController:animated:completion:));
+    if (presentVCMethod) {
+        orig_UIViewController_presentViewController = (void *)method_getImplementation(presentVCMethod);
+        method_setImplementation(presentVCMethod, (IMP)hook_UIViewController_presentViewController);
     }
 }
