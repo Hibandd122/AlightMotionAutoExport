@@ -36,7 +36,6 @@ static void AMAutoSaveVideoAtPath(NSString *filePath) {
     UISaveVideoAtPathToSavedPhotosAlbum(filePath, nil, NULL, NULL);
     AMNotifyUser(@"Alight Motion Pro", @"Video đã được tự động lưu vào Cuộn Camera (Photos) thành công!");
 
-    // Reset debounce flag after 5 seconds
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         hasSavedRecentVideo = NO;
     });
@@ -72,6 +71,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 @interface AMLyricsQueueManager : NSObject
 @property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
 @property (nonatomic, assign) NSUInteger currentIndex;
+@property (nonatomic, assign) BOOL isAutoBatchRunning;
 + (instancetype)sharedManager;
 - (void)loadLyrics:(NSArray<NSString *> *)lines;
 - (NSString *)currentLineText;
@@ -88,6 +88,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         mgr = [[self alloc] init];
         mgr.lyricsLines = [NSMutableArray array];
         mgr.currentIndex = 0;
+        mgr.isAutoBatchRunning = NO;
     });
     return mgr;
 }
@@ -122,11 +123,14 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Full Automatic Timeline Batch Lyrics Engine
+#pragma mark - Full Automatic Timeline Batch Lyrics Runner
 
-static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
-    if (!lines || lines.count == 0) return 0;
-    __block NSUInteger count = 0;
+static void AMRunFullAutoBatchFilling(NSArray<NSString *> *lines) {
+    if (!lines || lines.count == 0) return;
+
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    [mgr loadLyrics:lines];
+    mgr.isAutoBatchRunning = YES;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
@@ -135,7 +139,7 @@ static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
             root = root.presentedViewController;
         }
 
-        // Search for all TimelineCell and text views in the active window hierarchy
+        // Collect all TimelineCell views
         NSMutableArray *allCells = [NSMutableArray array];
         NSMutableArray *queue = [NSMutableArray arrayWithObject:window];
         while (queue.count > 0) {
@@ -143,13 +147,13 @@ static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
             [queue removeObjectAtIndex:0];
 
             NSString *cls = NSStringFromClass([v class]);
-            if ([cls containsString:@"TimelineCell"] || [cls containsString:@"LayerThumbnailCell"]) {
+            if ([cls containsString:@"TimelineCell"]) {
                 [allCells addObject:v];
             }
             [queue addObjectsFromArray:v.subviews];
         }
 
-        // Sort cells chronologically by position
+        // Sort cells top to bottom
         [allCells sortUsingComparator:^NSComparisonResult(UIView *c1, UIView *c2) {
             CGPoint p1 = [c1 convertPoint:CGPointZero toView:nil];
             CGPoint p2 = [c2 convertPoint:CGPointZero toView:nil];
@@ -159,39 +163,48 @@ static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
             return p1.x < p2.x ? NSOrderedAscending : NSOrderedDescending;
         }];
 
-        NSUInteger lineIdx = 0;
-        for (UIView *cell in allCells) {
-            if (lineIdx >= lines.count) break;
-
-            UILabel *lbl = nil;
-            if ([cell respondsToSelector:@selector(itemLabel)]) {
-                lbl = [cell valueForKey:@"itemLabel"];
-            }
-            if (!lbl) {
-                for (UIView *sv in cell.subviews) {
-                    if ([sv isKindOfClass:[UILabel class]]) {
-                        lbl = (UILabel *)sv;
-                        break;
-                    }
+        // Auto-run tap sequence across all timeline cells
+        for (NSUInteger i = 0; i < allCells.count && i < lines.count; i++) {
+            UIView *cell = allCells[i];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                // Update cell label immediately
+                UILabel *lbl = nil;
+                if ([cell respondsToSelector:@selector(itemLabel)]) {
+                    lbl = [cell valueForKey:@"itemLabel"];
                 }
-            }
-
-            if (lbl) {
-                NSString *verse = lines[lineIdx];
-                lbl.text = verse;
+                if (lbl) {
+                    lbl.text = lines[i];
+                }
                 @try {
-                    [cell setValue:verse forKey:@"labelText"];
+                    [cell setValue:lines[i] forKey:@"labelText"];
                 } @catch (NSException *e) {}
 
                 [cell setNeedsLayout];
                 [cell setNeedsDisplay];
-                count++;
-                lineIdx++;
-            }
-        }
-    });
 
-    return count;
+                // Trigger select gesture
+                for (UIGestureRecognizer *g in cell.gestureRecognizers) {
+                    if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
+                        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)g;
+                        for (id target in [tap valueForKey:@"targets"]) {
+                            id t = [target valueForKey:@"target"];
+                            SEL a = NSSelectorFromString([target valueForKey:@"action"]);
+                            if (t && a && [t respondsToSelector:a]) {
+                                #pragma clang diagnostic push
+                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                [t performSelector:a withObject:tap];
+                                #pragma clang diagnostic pop
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(lines.count * 0.25 * NSEC_PER_SEC + 0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            mgr.isAutoBatchRunning = NO;
+        });
+    });
 }
 
 #pragma mark - Batch Lyrics Inserter Modal View Controller
@@ -237,7 +250,7 @@ static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Chỉ cần dán lời bài hát (mỗi dòng 1 câu). Tweak sẽ tự động điền TOÀN BỘ vào tất cả các Text Layer theo thứ tự timeline!";
+    subtitleLabel.text = @"Dán danh sách lời bài hát. Bấm nút dưới để TỰ ĐỘNG ĐIỀN TOÀN BỘ vào tất cả các Text Layer trên Timeline!";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -417,74 +430,16 @@ static NSUInteger AMAutoFillAllTimelineLayers(NSArray<NSString *> *lines) {
         return;
     }
 
-    // 1. Load into Smart Lyrics Queue
-    [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
+    // Launch Full Auto Fill sequence
+    AMRunFullAutoBatchFilling(lines);
 
-    // 2. Perform UI Timeline Full-Auto Fill
-    NSUInteger uiFilled = AMAutoFillAllTimelineLayers(lines);
-
-    // 3. Direct Project XML sync
-    NSUInteger xmlReplaced = [self updateRecentProjectXMLFilesWithLines:lines];
-
-    NSUInteger finalCount = (uiFilled > 0) ? uiFilled : ((xmlReplaced > 0) ? xmlReplaced : lines.count);
-
-    NSString *msg = [NSString stringWithFormat:@"Đã tự động điền thành công %lu câu hát vào tất cả các Text Layer trên Timeline!\n(Hiệu ứng, font chữ và mốc beat được giữ nguyên 100%%)", (unsigned long)finalCount];
-
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất!"
-                                                                   message:msg
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Tuyệt vời" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self dismissModal];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (NSUInteger)updateRecentProjectXMLFilesWithLines:(NSArray<NSString *> *)lines {
-    NSUInteger count = 0;
-    NSArray *searchPaths = @[
-        NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject ?: @"",
-        NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject ?: @""
-    ];
-
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *baseDir in searchPaths) {
-        if (baseDir.length == 0) continue;
-        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:baseDir];
-        NSString *file;
-        while ((file = [enumerator nextObject])) {
-            if ([file.pathExtension.lowercaseString isEqualToString:@"xml"] || [file.pathExtension.lowercaseString isEqualToString:@"amproject"]) {
-                NSString *fullPath = [baseDir stringByAppendingPathComponent:file];
-                NSError *err = nil;
-                NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:&err];
-                if (content && ([content containsString:@"com.alightcreative.motion.text"] || [content containsString:@"<shape"])) {
-                    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"<property name=\"text\" value=\"([^\"]*)\""
-                                                                                           options:0
-                                                                                             error:nil];
-                    NSArray *matches = [regex matchesInString:content options:0 range:NSMakeRange(0, content.length)];
-                    if (matches.count > 0) {
-                        NSMutableString *mutableContent = [content mutableCopy];
-                        for (NSInteger i = (NSInteger)matches.count - 1; i >= 0; i--) {
-                            if (i < (NSInteger)lines.count) {
-                                NSTextCheckingResult *m = matches[i];
-                                NSRange valRange = [m rangeAtIndex:1];
-                                if (valRange.location != NSNotFound) {
-                                    [mutableContent replaceCharactersInRange:valRange withString:lines[i]];
-                                    count++;
-                                }
-                            }
-                        }
-                        [mutableContent writeToFile:fullPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-                    }
-                }
-            }
-        }
-    }
-    return count;
+    [self dismissModal];
+    AMNotifyUser(@"Alight Motion Pro", [NSString stringWithFormat:@"Đang tự động điền %lu câu hát vào toàn bộ Text Layer...", (unsigned long)lines.count]);
 }
 
 @end
 
-#pragma mark - Hook TextInputVC (Auto-Paste Next Verse on Tap)
+#pragma mark - Hook TextInputVC & EditTextPanelVC (Instant Auto-Fill on Open & Auto-Done)
 
 static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
 
@@ -500,7 +455,6 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     if ([self respondsToSelector:@selector(inputTextView)]) {
         tv = [self valueForKey:@"inputTextView"];
     }
-
     if (!tv) {
         for (UIView *sub in self.view.subviews) {
             if ([sub isKindOfClass:[UITextView class]]) {
@@ -511,109 +465,34 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 
     if (tv) {
-        UIToolbar *bar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 44)];
-        bar.barStyle = UIBarStyleBlack;
-        bar.translucent = YES;
-        bar.tintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-
-        NSUInteger curIdx = mgr.currentIndex + 1;
-        NSString *btnTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curIdx, (unsigned long)mgr.lyricsLines.count];
-
-        UIBarButtonItem *autoFillItem = [[UIBarButtonItem alloc] initWithTitle:btnTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
-        UIBarButtonItem *prevItem = [[UIBarButtonItem alloc] initWithTitle:@"⏪" style:UIBarButtonItemStylePlain target:self action:@selector(am_prevVerse)];
-        UIBarButtonItem *nextItem = [[UIBarButtonItem alloc] initWithTitle:@"⏩" style:UIBarButtonItemStylePlain target:self action:@selector(am_nextVerse)];
-        UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-        UIBarButtonItem *doneItem = [[UIBarButtonItem alloc] initWithTitle:@"✅ Xong" style:UIBarButtonItemStylePlain target:self action:@selector(am_dismissKeyboard)];
-
-        [bar setItems:@[prevItem, nextItem, autoFillItem, flex, doneItem]];
-        tv.inputAccessoryView = bar;
-        [tv reloadInputViews];
-    }
-}
-
-static void am_autoFillCurrentVerse(UIViewController *self, SEL _cmd) {
-    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    NSString *line = [mgr currentLineText];
-    if (!line) return;
-
-    UITextView *tv = nil;
-    if ([self respondsToSelector:@selector(inputTextView)]) {
-        tv = [self valueForKey:@"inputTextView"];
-    }
-    if (!tv) {
-        for (UIView *sub in self.view.subviews) {
-            if ([sub isKindOfClass:[UITextView class]]) {
-                tv = (UITextView *)sub;
-                break;
+        // Automatically inject current verse immediately!
+        NSString *line = [mgr currentLineText];
+        if (line && line.length > 0) {
+            tv.text = line;
+            if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+                [tv.delegate textViewDidChange:tv];
             }
+            @try {
+                [self setValue:line forKey:@"appearText"];
+            } @catch (NSException *e) {}
+
+            // Advance to next verse for next layer
+            [mgr consumeNextLineText];
+        }
+
+        // If in auto batch mode, automatically trigger done button after 0.1s
+        if (mgr.isAutoBatchRunning) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIViewController *parent = self.parentViewController;
+                if (parent && [parent respondsToSelector:@selector(doneButton)]) {
+                    UIButton *doneBtn = [parent valueForKey:@"doneButton"];
+                    if ([doneBtn isKindOfClass:[UIButton class]]) {
+                        [doneBtn sendActionsForControlEvents:UIControlEventTouchUpInside];
+                    }
+                }
+            });
         }
     }
-
-    if (tv) {
-        tv.text = line;
-        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
-            [tv.delegate textViewDidChange:tv];
-        }
-        @try {
-            [self setValue:line forKey:@"appearText"];
-        } @catch (NSException *e) {}
-
-        [mgr consumeNextLineText];
-
-        if (tv.inputAccessoryView && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
-            UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
-            NSMutableArray *items = [bar.items mutableCopy];
-            if (items.count >= 3) {
-                NSUInteger nextNum = mgr.currentIndex + 1;
-                NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)nextNum, (unsigned long)mgr.lyricsLines.count];
-                UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
-                items[2] = newItem;
-                [bar setItems:items];
-            }
-        }
-    }
-}
-
-static void am_prevVerse(UIViewController *self, SEL _cmd) {
-    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    if (mgr.currentIndex > 0) {
-        mgr.currentIndex--;
-    }
-    UITextView *tv = [self valueForKey:@"inputTextView"];
-    if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
-        UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
-        NSMutableArray *items = [bar.items mutableCopy];
-        if (items.count >= 3) {
-            NSUInteger curNum = mgr.currentIndex + 1;
-            NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curNum, (unsigned long)mgr.lyricsLines.count];
-            UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
-            items[2] = newItem;
-            [bar setItems:items];
-        }
-    }
-}
-
-static void am_nextVerse(UIViewController *self, SEL _cmd) {
-    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
-        mgr.currentIndex++;
-    }
-    UITextView *tv = [self valueForKey:@"inputTextView"];
-    if (tv && [tv.inputAccessoryView isKindOfClass:[UIToolbar class]]) {
-        UIToolbar *bar = (UIToolbar *)tv.inputAccessoryView;
-        NSMutableArray *items = [bar.items mutableCopy];
-        if (items.count >= 3) {
-            NSUInteger curNum = mgr.currentIndex + 1;
-            NSString *newTitle = [NSString stringWithFormat:@"⚡ Điền Câu #%lu/%lu", (unsigned long)curNum, (unsigned long)mgr.lyricsLines.count];
-            UIBarButtonItem *newItem = [[UIBarButtonItem alloc] initWithTitle:newTitle style:UIBarButtonItemStyleDone target:self action:@selector(am_autoFillCurrentVerse)];
-            items[2] = newItem;
-            [bar setItems:items];
-        }
-    }
-}
-
-static void am_dismissKeyboard(UIViewController *self, SEL _cmd) {
-    [self.view endEditing:YES];
 }
 
 #pragma mark - Floating Tool Button Manager
@@ -716,7 +595,6 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
     if (vc) {
         NSString *className = NSStringFromClass([vc class]);
 
-        // 1. Block UIAlertController if it contains advertisements, crack notices, telegram channels, or upgrade promos
         if ([vc isKindOfClass:[UIAlertController class]]) {
             UIAlertController *alert = (UIAlertController *)vc;
             NSString *title = alert.title ?: @"";
@@ -736,7 +614,6 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             }
         }
 
-        // 2. Block Ad SDKs & In-app upsell / subscription / trial popups
         if ([className containsString:@"GAD"] || 
             [className containsString:@"IronSource"] || 
             [className containsString:@"Vungle"] || 
@@ -823,11 +700,6 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
 
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
-        class_addMethod(textInputClass, @selector(am_autoFillCurrentVerse), (IMP)am_autoFillCurrentVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_prevVerse), (IMP)am_prevVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_nextVerse), (IMP)am_nextVerse, "v@:");
-        class_addMethod(textInputClass, @selector(am_dismissKeyboard), (IMP)am_dismissKeyboard, "v@:");
-
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
