@@ -592,22 +592,28 @@ static void UMInstallDeferredFeatures(void) {
         safeSwizzle([UIApplication class], @selector(openURL:options:completionHandler:), @selector(um_openURL:options:completionHandler:));
 #endif
         NSLog(@"UM_BOOT_03_APP_READY");
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-            [[UMEffectRegistry sharedRegistry] loadAllUltraEffects];
-            NSLog(@"UM_BOOT_06_REGISTRY_READY");
-        });
+        // Do not scan/parse the entire BuiltinEffects directory during the
+        // first launch. The registry remains lazy and loads on first use.
+        NSLog(@"UM_BOOT_06_REGISTRY_DEFERRED");
     });
 }
 
 // Constructor does registration only.  No Objective-C swizzling, UI, file/XML,
 // permission, Metal, audio, or network work is performed before UIApplicationMain.
 __attribute__((constructor)) static void initUltraMotionMod() {
-    NSLog(@"UM_BOOT_01_DYLIB_LOADED");
-    NSLog(@"UM_BOOT_02_DEFERRED_INIT");
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(__unused NSNotification *note) {
-        UMInstallDeferredFeatures();
-    }];
+    // Keep dyld-time work to a GCD enqueue only.  Objective-C/Foundation
+    // messaging is deferred until the main run loop is alive.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"UM_BOOT_01_DYLIB_LOADED");
+        NSLog(@"UM_BOOT_02_DEFERRED_INIT");
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(__unused NSNotification *note) {
+            UMInstallDeferredFeatures();
+        }];
+        if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
+            UMInstallDeferredFeatures();
+        }
+    });
 }
