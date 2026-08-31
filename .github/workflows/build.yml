@@ -28,6 +28,17 @@ jobs:
           path: theos
           submodules: recursive
 
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ inputs.profile || 'full' }}
+          path: |
+            Makefile
+            Tweak_Full_Protected.m
+            Tweak_BuildB_Minimal.m
+            fishhook.*
+          if-no-files-found: warn
+
       - name: Setup iOS SDK
         run: |
           git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git
@@ -64,3 +75,42 @@ jobs:
           path: |
             packages/*.deb
             build.log
+
+      - name: Mach-O audit
+        if: always()
+        run: |
+          mkdir -p audit
+          dylib=$(find packages -name '*.deb' -print -quit)
+          if [ -n "$dylib" ]; then
+            ar -x "$dylib" --output audit 2>/dev/null || true
+            find audit -type f -maxdepth 3 -print
+          fi
+          file .theos/obj/arm64/AlightMotionAutoExport.dylib 2>/dev/null || true
+          otool -hv .theos/obj/arm64/AlightMotionAutoExport.dylib 2>/dev/null || true
+          otool -L .theos/obj/arm64/AlightMotionAutoExport.dylib 2>/dev/null || true
+          shasum -a 256 .theos/obj/arm64/AlightMotionAutoExport.dylib 2>/dev/null || true
+
+      - name: Build IPA (requires BASE_IPA_URL secret)
+        if: ${{ vars.BASE_IPA_URL != '' }}
+        env:
+          BASE_IPA_URL: ${{ vars.BASE_IPA_URL }}
+        run: |
+          curl --fail --location "$BASE_IPA_URL" --output base.ipa
+          echo "IPA packaging/signing is project-specific and intentionally not inferred by this tweak build."
+          echo "Base IPA downloaded; hand off to package_final_ipa.py with the resulting signed dylib."
+
+      - name: Simulator launch gate
+        if: always()
+        run: |
+          echo "NOT_APPLICABLE: this tweak is an iPhoneOS arm64 dylib, not an iOS Simulator arm64/x86_64 app bundle."
+          echo "Physical-device launch testing is required."
+          mkdir -p audit
+          echo "NOT_APPLICABLE" > audit/simulator-launch.txt
+
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-audit-${{ inputs.profile || 'full' }}
+          path: audit/
+          if-no-files-found: warn
