@@ -1112,7 +1112,7 @@ static void AMAutoSaveVideoAtPath(NSString *filePath) {
     while (root.presentedViewController) root = root.presentedViewController;
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚙️ Ultra Motion iOS 6.0.3"
-                                                                   message:@"Cài đặt và Tiện ích Pro (Full Dark Mode, 497 Effects, 120 FPS, Audio Sync)"
+                                                                   message:@"Cài đặt và Tiện ích Pro (Full Dark Mode, 497 Effects, Audio Sync)"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"📝 Quản Lý Lời Bài Hát (Batch Lyrics)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -1482,6 +1482,6 @@ __attribute__((constructor)) static void initUltraMotionMod() {
     NSLog(@"[UltraMotion] 🚀 ULTRA MOTION iOS 6.0.3 INITIALIZED!");
     NSLog(@"[UltraMotion] Theme: Full Dark Mode OLED (#08080A)");
     NSLog(@"[UltraMotion] Effects: 497+ Extra Effects across 20+ Categories");
-    NSLog(@"[UltraMotion] Tools: Multi-XML, Audio Sync, Waveform, 120 FPS");
+    NSLog(@"[UltraMotion] Tools: Multi-XML, Audio Sync, Waveform, Pro Suite");
     NSLog(@"[UltraMotion] ========================================\n");
 }
