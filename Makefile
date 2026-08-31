@@ -8,6 +8,6 @@ include $(THEOS)/makefiles/common.mk
 LIBRARY_NAME = AlightMotionAutoExport
 AlightMotionAutoExport_FILES = Tweak.m fishhook.c
 AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function
-AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore AudioToolbox
+AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore AudioToolbox AVFoundation CoreMedia CoreImage VideoToolbox
 
 include $(THEOS_MAKE_PATH)/library.mk
