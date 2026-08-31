@@ -91,7 +91,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Smart Lyrics Item & Engine (Timeline Aware & Queue Matching)
+#pragma mark - Smart Lyrics Item & Engine (Timeline Aware & Zero-Click Auto Insertion)
 
 @interface AMLyricsItem : NSObject
 @property (nonatomic, copy) NSString *text;
@@ -327,7 +327,6 @@ static double AMParseTimestampToSeconds(NSString *tsStr) {
 #pragma mark - Timeline Playhead Detector Helper
 
 static double AMGetCurrentTimelinePlayheadSeconds(void) {
-    // 1. Traverse window hierarchy to find TimelineViewController or playheadLabel
     UIWindow *keyWin = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
     if (!keyWin) return -1.0;
 
@@ -379,7 +378,7 @@ static double AMGetCurrentTimelinePlayheadSeconds(void) {
     return -1.0;
 }
 
-#pragma mark - Auto Detect & Auto Lyrics Insert Engine Core
+#pragma mark - Auto Detect & Auto Lyrics Insert Engine Core (Zero-Click Hands-Free)
 
 static void AMPerformAutoLyricsInjection(UIViewController *textInputVC, UITextView *tv) {
     if (!AMIsAutoLyricsSyncEnabled()) {
@@ -413,7 +412,7 @@ static void AMPerformAutoLyricsInjection(UIViewController *textInputVC, UITextVi
             }
         }
         if (!matchesKnownLyrics) {
-            NSLog(@"[LyricsEngine] ℹ️ Custom user text detected (\"%@\"). Skipping auto-injection to prevent overwrite.", curText);
+            NSLog(@"[LyricsEngine] ℹ️ Custom user text detected (\"%@\"). Skipping auto-injection.", curText);
             return;
         }
     }
@@ -432,7 +431,7 @@ static void AMPerformAutoLyricsInjection(UIViewController *textInputVC, UITextVi
         return;
     }
 
-    // Perform Direct In-Memory Injection
+    // Direct In-Memory Injection
     tv.text = selectedItem.text;
 
     // Update Swift appearText model property
@@ -455,15 +454,15 @@ static void AMPerformAutoLyricsInjection(UIViewController *textInputVC, UITextVi
 
     // Structured Debug Logging
     NSLog(@"\n[LyricsEngine] ========================================");
-    NSLog(@"[LyricsEngine] 🎯 Auto Detected Text Layer & Editor!");
+    NSLog(@"[LyricsEngine] 🎯 Zero-Click Auto Injected Text Layer!");
     NSLog(@"[LyricsEngine] Target Class: %@", NSStringFromClass([textInputVC class]));
     NSLog(@"[LyricsEngine] Timeline Playhead: %.2f seconds", playhead);
-    NSLog(@"[LyricsEngine] Selected Verse: \"%@\" (Timestamp: %@)", selectedItem.text, selectedItem.timestampStr ?: @"Sequential");
-    NSLog(@"[LyricsEngine] Injection Result: SUCCESS");
+    NSLog(@"[LyricsEngine] Injected Verse: \"%@\" (Timestamp: %@)", selectedItem.text, selectedItem.timestampStr ?: @"Sequential");
+    NSLog(@"[LyricsEngine] Result: SUCCESS (Keyboard Suppressed)");
     NSLog(@"[LyricsEngine] ========================================\n");
 }
 
-#pragma mark - Hook TextInputVC & UITextView (Seamless 100% Native Keyboard)
+#pragma mark - Hook TextInputVC & EditTextPanelVC (Zero-Click Instant Commit & Dismiss)
 
 static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
 
@@ -486,15 +485,61 @@ static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOO
     }
 
     if (tv) {
-        tv.inputAccessoryView = nil; // Keep iOS Keyboard 100% Clean & Native
+        tv.inputAccessoryView = nil;
         AMPerformAutoLyricsInjection(self, tv);
+
+        if (AMIsAutoLyricsSyncEnabled()) {
+            // Instantly dismiss text input view & keyboard so user stays on editor canvas!
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self.view endEditing:YES];
+                if (self.presentingViewController) {
+                    [self dismissViewControllerAnimated:YES completion:nil];
+                }
+            });
+        }
+    }
+}
+
+static void (*orig_EditTextPanelVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+
+static void hook_EditTextPanelVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    if (orig_EditTextPanelVC_viewDidAppear) {
+        orig_EditTextPanelVC_viewDidAppear(self, _cmd, animated);
+    }
+
+    if (AMIsAutoLyricsSyncEnabled()) {
+        UIViewController *textVC = nil;
+        @try {
+            textVC = [self valueForKey:@"$__lazy_storage_$_textInputVC"];
+        } @catch (NSException *e) {}
+
+        if (textVC) {
+            UITextView *tv = nil;
+            if ([textVC respondsToSelector:@selector(inputTextView)]) {
+                tv = [textVC valueForKey:@"inputTextView"];
+            }
+            if (tv) {
+                AMPerformAutoLyricsInjection(textVC, tv);
+            }
+        }
+
+        // Automatically commit text and close panel immediately without opening text editor
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if ([self respondsToSelector:@selector(doneButton)]) {
+                UIButton *done = [self valueForKey:@"doneButton"];
+                if ([done isKindOfClass:[UIButton class]]) {
+                    [done sendActionsForControlEvents:UIControlEventTouchUpInside];
+                }
+            }
+            [self.view endEditing:YES];
+        });
     }
 }
 
 static BOOL (*orig_UITextView_becomeFirstResponder)(UITextView *, SEL);
 
 static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
-    self.inputAccessoryView = nil; // Keep iOS Keyboard 100% Clean & Native
+    self.inputAccessoryView = nil;
 
     UIResponder *responder = self;
     while ((responder = [responder nextResponder])) {
@@ -506,6 +551,13 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
         NSString *vcName = NSStringFromClass([responder class]);
         if ([vcName containsString:@"TextInputVC"] || [vcName containsString:@"EditText"]) {
             AMPerformAutoLyricsInjection((UIViewController *)responder, self);
+            if (AMIsAutoLyricsSyncEnabled()) {
+                // Suppress keyboard popup completely!
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self resignFirstResponder];
+                });
+                return NO;
+            }
         }
     }
 
@@ -785,9 +837,9 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     [self.view addSubview:card1];
 
     UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 90, 22)];
-    l1.text = @"⚡ Tự Động Điền Lời (Auto Lyrics Sync)";
+    l1.text = @"⚡ Tự Động Điền Không Cần Mở Ô Chữ";
     l1.textColor = [UIColor whiteColor];
-    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    l1.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
     [card1 addSubview:l1];
 
     self.autoSyncSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(card1.bounds.size.width - 66, 8, 51, 31)];
@@ -868,7 +920,7 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     [card3 addSubview:l3];
 
     UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 40)];
-    l3Sub.text = @"🟢 Auto Lyrics Insert Engine: Hoạt động (Không cần nút)\n🟢 Full Premium Pro v6.2.56 Unlocked (4K, 120 FPS)\n🟢 1.182 Hiệu ứng & Presets mở rộng sẵn sàng";
+    l3Sub.text = @"🟢 Zero-Click Auto Insert: Tự điền ngay khi tạo Text Layer\n🟢 Tự động ẩn hộp thoại & bàn phím để không gián đoạn\n🟢 Full Premium Pro v6.2.56 Unlocked (4K, 120 FPS)";
     l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
     l3Sub.numberOfLines = 3;
@@ -1367,13 +1419,22 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
     }
 
-    // 8. Hook TextInputVC & UITextView (Auto Detection & Insertion Engine)
+    // 8. Hook TextInputVC, EditTextPanelVC & UITextView (Zero-Click Auto Insertion)
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
             method_setImplementation(textAppearMethod, (IMP)hook_TextInputVC_viewDidAppear);
+        }
+    }
+
+    Class editPanelClass = objc_getClass("_TtC12AlightMotion15EditTextPanelVC");
+    if (editPanelClass) {
+        Method m = class_getInstanceMethod(editPanelClass, @selector(viewDidAppear:));
+        if (m) {
+            orig_EditTextPanelVC_viewDidAppear = (void *)method_getImplementation(m);
+            method_setImplementation(m, (IMP)hook_EditTextPanelVC_viewDidAppear);
         }
     }
 
