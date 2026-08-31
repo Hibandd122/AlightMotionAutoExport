@@ -9,6 +9,11 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 #import <objc/runtime.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <limits.h>
+#include <stdio.h>
 
 #ifndef UM_ENABLE_UIKIT_HOOKS
 #define UM_ENABLE_UIKIT_HOOKS 0
@@ -585,6 +590,7 @@ static void safeSwizzle(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 #if UM_ENABLE_CRASH_REPORTING
+static char gUMCrashPath[PATH_MAX];
 static NSString *UMCrashReportPath(void) {
     NSString *dir = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
     return [dir stringByAppendingPathComponent:@"ultramotion-last-crash.txt"];
@@ -597,10 +603,30 @@ static void UMUncaughtExceptionHandler(NSException *exception) {
     [report writeToFile:UMCrashReportPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+static void UMSignalHandler(int signalNumber) {
+    // Only async-signal-safe operations are allowed here. Detailed symbol
+    // unwinding belongs to the system .ips report, not this handler.
+    int fd = open(gUMCrashPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) {
+        char buffer[64];
+        int length = snprintf(buffer, sizeof(buffer), "signal=%d\\n", signalNumber);
+        if (length > 0) write(fd, buffer, (size_t)length);
+        close(fd);
+    }
+    _exit(128 + signalNumber);
+}
+
 static void UMInstallCrashDiagnostics(void) {
+    NSString *reportPath = UMCrashReportPath();
+    strlcpy(gUMCrashPath, reportPath.fileSystemRepresentation, sizeof(gUMCrashPath));
     NSSetUncaughtExceptionHandler(UMUncaughtExceptionHandler);
+    signal(SIGABRT, UMSignalHandler);
+    signal(SIGSEGV, UMSignalHandler);
+    signal(SIGBUS, UMSignalHandler);
+    signal(SIGILL, UMSignalHandler);
+    signal(SIGFPE, UMSignalHandler);
     NSString *webhook = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UMCrashWebhookURL"];
-    NSString *path = UMCrashReportPath();
+    NSString *path = reportPath;
     NSString *report = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
     if (!webhook.length || !report.length) return;
     NSDictionary *payload = @{ @"content": [NSString stringWithFormat:@"UltraMotion crash report:\n%@", [report substringToIndex:MIN(report.length, (NSUInteger)1800)]] };
