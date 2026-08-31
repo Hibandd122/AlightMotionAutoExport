@@ -3,6 +3,16 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Startup A/B profile'
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - minimal
+          - hooks
 
 jobs:
   build:
@@ -32,8 +42,15 @@ jobs:
       - name: Build Tweak
         run: |
           export THEOS=$GITHUB_WORKSPACE/theos
+          profile="${{ inputs.profile || 'full' }}"
+          case "$profile" in
+            minimal) make_args="BUILD_B=1" ;;
+            hooks) make_args="HOOKS=1" ;;
+            full) make_args="" ;;
+            *) echo "Unknown profile: $profile"; exit 2 ;;
+          esac
           set +e
-          make package FINALPACKAGE=1 V=1 2>&1 | tee build.log
+          make clean package FINALPACKAGE=1 V=1 $make_args 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           grep -E "error:|fatal error:|undefined reference|No rule to make" build.log | while IFS= read -r line; do
             echo "::error title=Theos build::$line"
@@ -43,5 +60,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Tweak-DEB
-          path: packages/*.deb
+          name: Tweak-DEB-${{ inputs.profile || 'full' }}
+          path: |
+            packages/*.deb
+            build.log

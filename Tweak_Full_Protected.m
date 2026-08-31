@@ -10,6 +10,10 @@
 #import <MetalKit/MetalKit.h>
 #import <objc/runtime.h>
 
+#ifndef UM_ENABLE_UIKIT_HOOKS
+#define UM_ENABLE_UIKIT_HOOKS 0
+#endif
+
 #pragma mark - =========================================================
 #pragma mark 1. UMThemeManager: Centralized Full Dark Mode OLED (#07080B)
 #pragma mark - =========================================================
@@ -577,25 +581,33 @@ static void safeSwizzle(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
+static void UMInstallDeferredFeatures(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // UIKit hooks are intentionally opt-in.  They must never run pre-main;
+        // enable only after physical-device A/B testing proves them safe.
+#if UM_ENABLE_UIKIT_HOOKS
+        safeSwizzle([UIViewController class], @selector(presentViewController:animated:completion:), @selector(um_presentViewController:animated:completion:));
+        safeSwizzle([UIApplication class], @selector(openURL:), @selector(um_openURL:));
+        safeSwizzle([UIApplication class], @selector(openURL:options:completionHandler:), @selector(um_openURL:options:completionHandler:));
+#endif
+        NSLog(@"UM_BOOT_03_APP_READY");
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_UTILITY, 0), ^{
+            [[UMEffectRegistry sharedRegistry] loadAllUltraEffects];
+            NSLog(@"UM_BOOT_06_REGISTRY_READY");
+        });
+    });
+}
+
+// Constructor does registration only.  No Objective-C swizzling, UI, file/XML,
+// permission, Metal, audio, or network work is performed before UIApplicationMain.
 __attribute__((constructor)) static void initUltraMotionMod() {
-    // 1. Safe Method Swizzling for Ads/Popups
-    Class vcClass = [UIViewController class];
-    safeSwizzle(vcClass, @selector(presentViewController:animated:completion:), @selector(um_presentViewController:animated:completion:));
-
-    Class appClass = [UIApplication class];
-    safeSwizzle(appClass, @selector(openURL:), @selector(um_openURL:));
-    safeSwizzle(appClass, @selector(openURL:options:completionHandler:), @selector(um_openURL:options:completionHandler:));
-
-    // 2. Defer heavy services until application finishes launching
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+    NSLog(@"UM_BOOT_01_DYLIB_LOADED");
+    NSLog(@"UM_BOOT_02_DEFERRED_INIT");
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
                                                       object:nil
                                                        queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification * _Nonnull note) {
-        // Pre-load effect registry in background thread
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-            [[UMEffectRegistry sharedRegistry] loadAllUltraEffects];
-        });
-        
-        NSLog(@"[UltraMotion] 🚀 ULTRA MOTION iOS 6.0.3 READY & RUNNING STABLY!");
+                                                  usingBlock:^(__unused NSNotification *note) {
+        UMInstallDeferredFeatures();
     }];
 }

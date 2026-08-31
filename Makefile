@@ -6,8 +6,20 @@ TARGET = iphone:clang:14.5:14.0
 include $(THEOS)/makefiles/common.mk
 
 LIBRARY_NAME = AlightMotionAutoExport
-AlightMotionAutoExport_FILES = Tweak.m
-AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function
+ifeq ($(BUILD_B),1)
+# Build B: dylib-load-only diagnostic (no registry, hooks, or feature code).
+AlightMotionAutoExport_FILES = Tweak_BuildB_Minimal.m
+else
+# Default production candidate: startup-safe full implementation.
+AlightMotionAutoExport_FILES = Tweak_Full_Protected.m
+endif
+# Startup-safe default: global UIKit hooks remain disabled until a physical
+# A/B run proves them safe. Set HOOKS=1 only for an isolated hook A/B build.
+ifeq ($(HOOKS),1)
+AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function -DUM_ENABLE_UIKIT_HOOKS=1
+else
+AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function -DUM_ENABLE_UIKIT_HOOKS=0
+endif
 AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore AudioToolbox AVFoundation CoreMedia CoreImage VideoToolbox Metal MetalKit
 
 include $(THEOS_MAKE_PATH)/library.mk
