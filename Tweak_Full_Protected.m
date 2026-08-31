@@ -148,7 +148,10 @@
         if (self.isLoaded) return;
         
         NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-        NSString *builtinDir = [bundlePath stringByAppendingPathComponent:@"BuiltinEffects"];
+        // Keep injected XML out of the host app's BuiltinEffects directory:
+        // its Singleton Loader validates that directory and aborts on unknown
+        // schemas. Only the tweak-owned registry reads this private directory.
+        NSString *builtinDir = [bundlePath stringByAppendingPathComponent:@"UltraMotionEffects"];
         
         NSFileManager *fm = [NSFileManager defaultManager];
         if (![fm fileExistsAtPath:builtinDir]) {
