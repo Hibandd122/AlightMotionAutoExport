@@ -13,6 +13,9 @@
 #ifndef UM_ENABLE_UIKIT_HOOKS
 #define UM_ENABLE_UIKIT_HOOKS 0
 #endif
+#ifndef UM_ENABLE_CRASH_REPORTING
+#define UM_ENABLE_CRASH_REPORTING 0
+#endif
 
 #pragma mark - =========================================================
 #pragma mark 1. UMThemeManager: Centralized Full Dark Mode OLED (#07080B)
@@ -581,6 +584,37 @@ static void safeSwizzle(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
+#if UM_ENABLE_CRASH_REPORTING
+static NSString *UMCrashReportPath(void) {
+    NSString *dir = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    return [dir stringByAppendingPathComponent:@"ultramotion-last-crash.txt"];
+}
+
+static void UMUncaughtExceptionHandler(NSException *exception) {
+    NSString *report = [NSString stringWithFormat:@"name=%@\nreason=%@\nstack=%@\n",
+                         exception.name ?: @"unknown", exception.reason ?: @"unknown",
+                         [exception.callStackSymbols componentsJoinedByString:@"\n"] ?: @""];
+    [report writeToFile:UMCrashReportPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+static void UMInstallCrashDiagnostics(void) {
+    NSSetUncaughtExceptionHandler(UMUncaughtExceptionHandler);
+    NSString *webhook = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UMCrashWebhookURL"];
+    NSString *path = UMCrashReportPath();
+    NSString *report = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (!webhook.length || !report.length) return;
+    NSDictionary *payload = @{ @"content": [NSString stringWithFormat:@"UltraMotion crash report:\n%@", [report substringToIndex:MIN(report.length, (NSUInteger)1800)]] };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:webhook]];
+    request.HTTPMethod = @"POST";
+    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    request.HTTPBody = data;
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(__unused NSData *d, __unused NSURLResponse *r, __unused NSError *e) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    }] resume];
+}
+#endif
+
 static void UMInstallDeferredFeatures(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -592,6 +626,9 @@ static void UMInstallDeferredFeatures(void) {
         safeSwizzle([UIApplication class], @selector(openURL:options:completionHandler:), @selector(um_openURL:options:completionHandler:));
 #endif
         NSLog(@"UM_BOOT_03_APP_READY");
+#if UM_ENABLE_CRASH_REPORTING
+        UMInstallCrashDiagnostics();
+#endif
         // Do not scan/parse the entire BuiltinEffects directory during the
         // first launch. The registry remains lazy and loads on first use.
         NSLog(@"UM_BOOT_06_REGISTRY_DEFERRED");

@@ -20,6 +20,9 @@ AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-
 else
 AlightMotionAutoExport_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-variable -Wno-unused-function -DUM_ENABLE_UIKIT_HOOKS=0
 endif
+ifeq ($(CRASH_REPORTING),1)
+AlightMotionAutoExport_CFLAGS += -DUM_ENABLE_CRASH_REPORTING=1
+endif
 AlightMotionAutoExport_FRAMEWORKS = UIKit UserNotifications Photos QuartzCore AudioToolbox AVFoundation CoreMedia CoreImage VideoToolbox Metal MetalKit
 
 include $(THEOS_MAKE_PATH)/library.mk
