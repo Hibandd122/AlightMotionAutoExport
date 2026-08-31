@@ -20,7 +20,7 @@ static void AMNotifyUser(NSString *title, NSString *body) {
                                                                   withCompletionHandler:nil];
 }
 
-#pragma mark - Settings & Auto Save Engine
+#pragma mark - Settings & Persistence Storage
 
 static BOOL AMIsAutoSaveEnabled(void) {
     NSNumber *val = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_AutoSaveToPhotos"];
@@ -33,16 +33,7 @@ static void AMSetAutoSaveEnabled(BOOL enabled) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-static BOOL AMIsAutoLyricsSyncEnabled(void) {
-    NSNumber *val = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_AutoLyricsSyncEnabled"];
-    if (val == nil) return YES;
-    return [val boolValue];
-}
-
-static void AMSetAutoLyricsSyncEnabled(BOOL enabled) {
-    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"AM_AutoLyricsSyncEnabled"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
+#pragma mark - Auto Save To Camera Roll Engine
 
 static BOOL hasSavedRecentVideo = NO;
 
@@ -91,483 +82,105 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return orig_UIActivityViewController_initWithActivityItems(self, _cmd, activityItems, applicationActivities);
 }
 
-#pragma mark - Smart Lyrics Item & Engine (Timeline Aware & Zero-Click Auto Insertion)
+#pragma mark - Lyrics Queue Manager (With Async Non-Blocking Disk Persistence)
 
-@interface AMLyricsItem : NSObject
-@property (nonatomic, copy) NSString *text;
-@property (nonatomic, assign) double timestamp; // in seconds (-1.0 if plain text)
-@property (nonatomic, copy) NSString *timestampStr; // e.g. @"00:12.50"
-@property (nonatomic, assign) BOOL isUsed;
-- (NSDictionary *)toDictionary;
-+ (instancetype)fromDictionary:(NSDictionary *)dict;
+@interface AMLyricsQueueManager : NSObject
+@property (nonatomic, strong) NSMutableArray<NSString *> *lyricsLines;
+@property (nonatomic, assign) NSUInteger currentIndex;
++ (instancetype)sharedManager;
+- (void)loadLyrics:(NSArray<NSString *> *)lines;
+- (void)clearLyrics;
+- (void)resetToFirstVerse;
+- (void)jumpToVerseIndex:(NSUInteger)index;
+- (NSString *)currentLineText;
+- (NSString *)consumeNextLineText;
+- (BOOL)hasNextLine;
 @end
 
-@implementation AMLyricsItem
+@implementation AMLyricsQueueManager
 
-- (NSDictionary *)toDictionary {
-    return @{
-        @"text": self.text ?: @"",
-        @"timestamp": @(self.timestamp),
-        @"timestampStr": self.timestampStr ?: @"",
-        @"isUsed": @(self.isUsed)
-    };
-}
-
-+ (instancetype)fromDictionary:(NSDictionary *)dict {
-    AMLyricsItem *item = [[AMLyricsItem alloc] init];
-    item.text = dict[@"text"] ?: @"";
-    item.timestamp = [dict[@"timestamp"] doubleValue];
-    item.timestampStr = dict[@"timestampStr"] ?: @"";
-    item.isUsed = [dict[@"isUsed"] boolValue];
-    return item;
-}
-
-@end
-
-@interface AMLyricsEngine : NSObject
-@property (nonatomic, strong) NSMutableArray<AMLyricsItem *> *items;
-@property (nonatomic, assign) NSUInteger queueIndex;
-@property (nonatomic, assign) BOOL autoSyncEnabled;
-+ (instancetype)sharedEngine;
-- (void)loadRawLyrics:(NSString *)rawText;
-- (void)clear;
-- (void)resetUsedStatus;
-- (BOOL)hasTimestampedLyrics;
-- (AMLyricsItem *)getBestMatchForPlayheadSeconds:(double)playheadSecs;
-- (AMLyricsItem *)getNextSequentialItem;
-- (void)saveToDisk;
-- (void)loadFromDisk;
-@end
-
-@implementation AMLyricsEngine
-
-+ (instancetype)sharedEngine {
-    static AMLyricsEngine *engine = nil;
++ (instancetype)sharedManager {
+    static AMLyricsQueueManager *mgr = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        engine = [[self alloc] init];
-        engine.items = [NSMutableArray array];
-        engine.autoSyncEnabled = AMIsAutoLyricsSyncEnabled();
-        [engine loadFromDisk];
-    });
-    return engine;
-}
-
-- (void)loadFromDisk {
-    NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_CachedLyricsItems"];
-    [self.items removeAllObjects];
-    if (cached && [cached isKindOfClass:[NSArray class]]) {
-        for (NSDictionary *dict in cached) {
-            if ([dict isKindOfClass:[NSDictionary class]]) {
-                [self.items addObject:[AMLyricsItem fromDictionary:dict]];
-            }
+        mgr = [[self alloc] init];
+        mgr.lyricsLines = [NSMutableArray array];
+        
+        NSArray *cached = [[NSUserDefaults standardUserDefaults] objectForKey:@"AM_CachedLyrics"];
+        if (cached && [cached isKindOfClass:[NSArray class]]) {
+            [mgr.lyricsLines addObjectsFromArray:cached];
         }
-    }
-    self.queueIndex = [[NSUserDefaults standardUserDefaults] integerForKey:@"AM_CachedLyricsQueueIndex"];
-    if (self.queueIndex >= self.items.count) {
-        self.queueIndex = 0;
-    }
+        mgr.currentIndex = [[NSUserDefaults standardUserDefaults] integerForKey:@"AM_CachedLyricsIndex"];
+        if (mgr.currentIndex >= mgr.lyricsLines.count) {
+            mgr.currentIndex = 0;
+        }
+    });
+    return mgr;
 }
 
 - (void)saveToDisk {
-    NSMutableArray *arr = [NSMutableArray array];
-    for (AMLyricsItem *it in self.items) {
-        [arr addObject:[it toDictionary]];
-    }
-    NSUInteger qIndex = self.queueIndex;
+    NSArray *linesCopy = [self.lyricsLines copy];
+    NSUInteger indexCopy = self.currentIndex;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-        [[NSUserDefaults standardUserDefaults] setObject:arr forKey:@"AM_CachedLyricsItems"];
-        [[NSUserDefaults standardUserDefaults] setInteger:qIndex forKey:@"AM_CachedLyricsQueueIndex"];
+        [[NSUserDefaults standardUserDefaults] setObject:linesCopy forKey:@"AM_CachedLyrics"];
+        [[NSUserDefaults standardUserDefaults] setInteger:indexCopy forKey:@"AM_CachedLyricsIndex"];
         [[NSUserDefaults standardUserDefaults] synchronize];
     });
 }
 
-static double AMParseTimestampToSeconds(NSString *tsStr) {
-    if (!tsStr || tsStr.length == 0) return -1.0;
-    NSArray *parts = [tsStr componentsSeparatedByString:@":"];
-    if (parts.count >= 2) {
-        double mins = [parts[0] doubleValue];
-        double secs = [parts[1] doubleValue];
-        return (mins * 60.0) + secs;
+- (void)loadLyrics:(NSArray<NSString *> *)lines {
+    [self.lyricsLines removeAllObjects];
+    if (lines) {
+        [self.lyricsLines addObjectsFromArray:lines];
     }
-    return [tsStr doubleValue];
+    self.currentIndex = 0;
+    [self saveToDisk];
 }
 
-- (void)loadRawLyrics:(NSString *)rawText {
-    [self.items removeAllObjects];
-    self.queueIndex = 0;
+- (void)clearLyrics {
+    [self.lyricsLines removeAllObjects];
+    self.currentIndex = 0;
+    [self saveToDisk];
+}
 
-    if (!rawText || rawText.length == 0) {
+- (void)resetToFirstVerse {
+    self.currentIndex = 0;
+    [self saveToDisk];
+}
+
+- (void)jumpToVerseIndex:(NSUInteger)index {
+    if (index < self.lyricsLines.count) {
+        self.currentIndex = index;
         [self saveToDisk];
-        return;
     }
-
-    static NSRegularExpression *lrcRegex = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        lrcRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\[(\\d{1,2}:\\d{2}(?:[\\.:]\\d{1,3})?)\\]\\s*(.*)$"
-                                                             options:0
-                                                               error:nil];
-    });
-
-    NSArray *lines = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-    for (NSString *rawLine in lines) {
-        NSString *trimmed = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        if (trimmed.length == 0) continue;
-
-        NSTextCheckingResult *match = [lrcRegex firstMatchInString:trimmed options:0 range:NSMakeRange(0, trimmed.length)];
-        if (match && match.numberOfRanges >= 3) {
-            NSString *tsStr = [trimmed substringWithRange:[match rangeAtIndex:1]];
-            NSString *content = [trimmed substringWithRange:[match rangeAtIndex:2]];
-            content = [content stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (content.length > 0) {
-                AMLyricsItem *it = [[AMLyricsItem alloc] init];
-                it.timestampStr = tsStr;
-                it.timestamp = AMParseTimestampToSeconds(tsStr);
-                it.text = content;
-                it.isUsed = NO;
-                [self.items addObject:it];
-            }
-        } else {
-            // Plain text without LRC timestamp
-            AMLyricsItem *it = [[AMLyricsItem alloc] init];
-            it.timestampStr = nil;
-            it.timestamp = -1.0;
-            it.text = trimmed;
-            it.isUsed = NO;
-            [self.items addObject:it];
-        }
-    }
-
-    [self saveToDisk];
 }
 
-- (void)clear {
-    [self.items removeAllObjects];
-    self.queueIndex = 0;
-    [self saveToDisk];
+- (NSString *)currentLineText {
+    if (self.currentIndex < self.lyricsLines.count) {
+        return self.lyricsLines[self.currentIndex];
+    }
+    return nil;
 }
 
-- (void)resetUsedStatus {
-    for (AMLyricsItem *it in self.items) {
-        it.isUsed = NO;
+- (NSString *)consumeNextLineText {
+    if (self.currentIndex < self.lyricsLines.count) {
+        NSString *line = self.lyricsLines[self.currentIndex];
+        if (self.currentIndex + 1 < self.lyricsLines.count) {
+            self.currentIndex++;
+            [self saveToDisk];
+        }
+        return line;
     }
-    self.queueIndex = 0;
-    [self saveToDisk];
+    return nil;
 }
 
-- (BOOL)hasTimestampedLyrics {
-    for (AMLyricsItem *it in self.items) {
-        if (it.timestamp >= 0.0) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (AMLyricsItem *)getBestMatchForPlayheadSeconds:(double)playheadSecs {
-    if (self.items.count == 0) return nil;
-
-    AMLyricsItem *bestUnused = nil;
-    double minDiff = 999999.0;
-
-    for (AMLyricsItem *it in self.items) {
-        if (it.timestamp < 0.0) continue;
-        double diff = fabs(it.timestamp - playheadSecs);
-        // Match within timeline window or closest preceding line
-        if (!it.isUsed && it.timestamp <= (playheadSecs + 0.8) && diff < minDiff) {
-            minDiff = diff;
-            bestUnused = it;
-        }
-    }
-
-    if (bestUnused) {
-        return bestUnused;
-    }
-
-    // Fallback: If no direct timestamp match before playhead, pick next unused sequential
-    return [self getNextSequentialItem];
-}
-
-- (AMLyricsItem *)getNextSequentialItem {
-    if (self.items.count == 0) return nil;
-
-    // First search from queueIndex forward for unused item
-    for (NSUInteger i = self.queueIndex; i < self.items.count; i++) {
-        AMLyricsItem *it = self.items[i];
-        if (!it.isUsed) {
-            self.queueIndex = i + 1;
-            return it;
-        }
-    }
-
-    // Wrap around search from 0
-    for (NSUInteger i = 0; i < self.items.count; i++) {
-        AMLyricsItem *it = self.items[i];
-        if (!it.isUsed) {
-            self.queueIndex = i + 1;
-            return it;
-        }
-    }
-
-    // If all items are used, return the current queue index item and advance
-    if (self.queueIndex < self.items.count) {
-        AMLyricsItem *it = self.items[self.queueIndex];
-        if (self.queueIndex + 1 < self.items.count) {
-            self.queueIndex++;
-        }
-        return it;
-    }
-
-    return self.items.lastObject;
+- (BOOL)hasNextLine {
+    return self.currentIndex < self.lyricsLines.count;
 }
 
 @end
 
-#pragma mark - Timeline Playhead Detector Helper
-
-static double AMGetCurrentTimelinePlayheadSeconds(void) {
-    UIWindow *keyWin = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    if (!keyWin) return -1.0;
-
-    UIViewController *root = keyWin.rootViewController;
-    NSMutableArray<UIViewController *> *stack = [NSMutableArray arrayWithObject:root];
-
-    while (stack.count > 0) {
-        UIViewController *vc = stack.lastObject;
-        [stack removeLastObject];
-
-        NSString *clsName = NSStringFromClass([vc class]);
-
-        if ([clsName containsString:@"TimelineViewController"] || [clsName containsString:@"ProjectEditVC"]) {
-            // Check playheadLabel
-            if ([vc respondsToSelector:@selector(playheadLabel)]) {
-                id labelObj = [vc valueForKey:@"playheadLabel"];
-                NSString *timeStr = nil;
-                if ([labelObj isKindOfClass:[UIButton class]]) {
-                    timeStr = [(UIButton *)labelObj currentTitle] ?: [(UIButton *)labelObj titleLabel].text;
-                } else if ([labelObj isKindOfClass:[UILabel class]]) {
-                    timeStr = [(UILabel *)labelObj text];
-                }
-                if (timeStr && timeStr.length > 0) {
-                    double parsed = AMParseTimestampToSeconds(timeStr);
-                    if (parsed >= 0.0) return parsed;
-                }
-            }
-
-            // Check holder -> playerTime / seekTime
-            if ([vc respondsToSelector:@selector(holder)]) {
-                id holder = [vc valueForKey:@"holder"];
-                if (holder) {
-                    @try {
-                        id pt = [holder valueForKey:@"playerTime"];
-                        if ([pt respondsToSelector:@selector(doubleValue)]) {
-                            return [pt doubleValue];
-                        }
-                    } @catch (NSException *e) {}
-                }
-            }
-        }
-
-        if (vc.presentedViewController) {
-            [stack addObject:vc.presentedViewController];
-        }
-        [stack addObjectsFromArray:vc.childViewControllers];
-    }
-
-    return -1.0;
-}
-
-#pragma mark - Auto Detect & Auto Lyrics Insert Engine Core (Zero-Click Hands-Free)
-
-static void AMPerformAutoLyricsInjection(UIViewController *textInputVC, UITextView *tv) {
-    if (!AMIsAutoLyricsSyncEnabled()) {
-        return;
-    }
-
-    AMLyricsEngine *engine = [AMLyricsEngine sharedEngine];
-    if (engine.items.count == 0) {
-        return;
-    }
-
-    if (!tv) return;
-
-    // Safety Check: Is this a new/empty text layer or placeholder?
-    NSString *curText = [tv.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    
-    BOOL isNewOrPlaceholder = (curText.length == 0 ||
-                              [curText.lowercaseString isEqualToString:@"text"] ||
-                              [curText.lowercaseString isEqualToString:@"văn bản"] ||
-                              [curText.lowercaseString isEqualToString:@"nhập văn bản"] ||
-                              [curText.lowercaseString isEqualToString:@"sample text"] ||
-                              [curText.lowercaseString isEqualToString:@"tap to edit"]);
-
-    // If the text is already custom user-written text (not in our lyrics list), do NOT overwrite!
-    if (!isNewOrPlaceholder) {
-        BOOL matchesKnownLyrics = NO;
-        for (AMLyricsItem *it in engine.items) {
-            if ([it.text isEqualToString:curText]) {
-                matchesKnownLyrics = YES;
-                break;
-            }
-        }
-        if (!matchesKnownLyrics) {
-            NSLog(@"[LyricsEngine] ℹ️ Custom user text detected (\"%@\"). Skipping auto-injection.", curText);
-            return;
-        }
-    }
-
-    // Detect Timeline Playhead Time
-    double playhead = AMGetCurrentTimelinePlayheadSeconds();
-    AMLyricsItem *selectedItem = nil;
-
-    if ([engine hasTimestampedLyrics] && playhead >= 0.0) {
-        selectedItem = [engine getBestMatchForPlayheadSeconds:playhead];
-    } else {
-        selectedItem = [engine getNextSequentialItem];
-    }
-
-    if (!selectedItem || selectedItem.text.length == 0) {
-        return;
-    }
-
-    // Direct In-Memory Injection
-    tv.text = selectedItem.text;
-
-    // Update Swift appearText model property
-    @try {
-        [textInputVC setValue:selectedItem.text forKey:@"appearText"];
-    } @catch (NSException *e) {}
-
-    // Trigger UIKit Delegate & Notifications to immediately render on Metal canvas
-    if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
-        [tv.delegate textViewDidChange:tv];
-    }
-    if ([tv.delegate respondsToSelector:@selector(textView:shouldChangeTextInRange:replacementText:)]) {
-        [tv.delegate textView:tv shouldChangeTextInRange:NSMakeRange(0, tv.text.length) replacementText:selectedItem.text];
-    }
-    [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
-
-    // Mark used & save state
-    selectedItem.isUsed = YES;
-    [engine saveToDisk];
-
-    // Structured Debug Logging
-    NSLog(@"\n[LyricsEngine] ========================================");
-    NSLog(@"[LyricsEngine] 🎯 Zero-Click Auto Injected Text Layer!");
-    NSLog(@"[LyricsEngine] Target Class: %@", NSStringFromClass([textInputVC class]));
-    NSLog(@"[LyricsEngine] Timeline Playhead: %.2f seconds", playhead);
-    NSLog(@"[LyricsEngine] Injected Verse: \"%@\" (Timestamp: %@)", selectedItem.text, selectedItem.timestampStr ?: @"Sequential");
-    NSLog(@"[LyricsEngine] Result: SUCCESS (Keyboard Suppressed)");
-    NSLog(@"[LyricsEngine] ========================================\n");
-}
-
-#pragma mark - Hook TextInputVC & EditTextPanelVC (Zero-Click Instant Commit & Dismiss)
-
-static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
-
-static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
-    if (orig_TextInputVC_viewDidAppear) {
-        orig_TextInputVC_viewDidAppear(self, _cmd, animated);
-    }
-
-    UITextView *tv = nil;
-    if ([self respondsToSelector:@selector(inputTextView)]) {
-        tv = [self valueForKey:@"inputTextView"];
-    }
-    if (!tv) {
-        for (UIView *sub in self.view.subviews) {
-            if ([sub isKindOfClass:[UITextView class]]) {
-                tv = (UITextView *)sub;
-                break;
-            }
-        }
-    }
-
-    if (tv) {
-        tv.inputAccessoryView = nil;
-        AMPerformAutoLyricsInjection(self, tv);
-
-        if (AMIsAutoLyricsSyncEnabled()) {
-            // Instantly dismiss text input view & keyboard so user stays on editor canvas!
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [self.view endEditing:YES];
-                if (self.presentingViewController) {
-                    [self dismissViewControllerAnimated:YES completion:nil];
-                }
-            });
-        }
-    }
-}
-
-static void (*orig_EditTextPanelVC_viewDidAppear)(UIViewController *, SEL, BOOL);
-
-static void hook_EditTextPanelVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
-    if (orig_EditTextPanelVC_viewDidAppear) {
-        orig_EditTextPanelVC_viewDidAppear(self, _cmd, animated);
-    }
-
-    if (AMIsAutoLyricsSyncEnabled()) {
-        UIViewController *textVC = nil;
-        @try {
-            textVC = [self valueForKey:@"$__lazy_storage_$_textInputVC"];
-        } @catch (NSException *e) {}
-
-        if (textVC) {
-            UITextView *tv = nil;
-            if ([textVC respondsToSelector:@selector(inputTextView)]) {
-                tv = [textVC valueForKey:@"inputTextView"];
-            }
-            if (tv) {
-                AMPerformAutoLyricsInjection(textVC, tv);
-            }
-        }
-
-        // Automatically commit text and close panel immediately without opening text editor
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if ([self respondsToSelector:@selector(doneButton)]) {
-                UIButton *done = [self valueForKey:@"doneButton"];
-                if ([done isKindOfClass:[UIButton class]]) {
-                    [done sendActionsForControlEvents:UIControlEventTouchUpInside];
-                }
-            }
-            [self.view endEditing:YES];
-        });
-    }
-}
-
-static BOOL (*orig_UITextView_becomeFirstResponder)(UITextView *, SEL);
-
-static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
-    self.inputAccessoryView = nil;
-
-    UIResponder *responder = self;
-    while ((responder = [responder nextResponder])) {
-        if ([responder isKindOfClass:[UIViewController class]]) {
-            break;
-        }
-    }
-    if (responder) {
-        NSString *vcName = NSStringFromClass([responder class]);
-        if ([vcName containsString:@"TextInputVC"] || [vcName containsString:@"EditText"]) {
-            AMPerformAutoLyricsInjection((UIViewController *)responder, self);
-            if (AMIsAutoLyricsSyncEnabled()) {
-                // Suppress keyboard popup completely!
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self resignFirstResponder];
-                });
-                return NO;
-            }
-        }
-    }
-
-    if (orig_UITextView_becomeFirstResponder) {
-        return orig_UITextView_becomeFirstResponder(self, _cmd);
-    }
-    return YES;
-}
-
-#pragma mark - Batch Lyrics Importer Modal (With Smart LRC Parser & Visual Preview)
+#pragma mark - Batch Lyrics Inserter Modal View Controller (With Smart LRC Cleaner)
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
 @property (nonatomic, strong) UITextView *textView;
@@ -593,17 +206,9 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     [self setupTextView];
     [self setupButtons];
 
-    AMLyricsEngine *engine = [AMLyricsEngine sharedEngine];
-    if (engine.items.count > 0) {
-        NSMutableArray *lines = [NSMutableArray array];
-        for (AMLyricsItem *it in engine.items) {
-            if (it.timestampStr && it.timestampStr.length > 0) {
-                [lines addObject:[NSString stringWithFormat:@"[%@] %@", it.timestampStr, it.text]];
-            } else {
-                [lines addObject:it.text];
-            }
-        }
-        self.textView.text = [lines componentsJoinedByString:@"\n"];
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count > 0) {
+        self.textView.text = [mgr.lyricsLines componentsJoinedByString:@"\n"];
         [self updateLineCount];
     }
 
@@ -617,14 +222,14 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 
 - (void)setupHeader {
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
-    titleLabel.text = @"📝 Nạp Lời Bài Hát (Hỗ Trợ LRC & Text Thường)";
+    titleLabel.text = @"📝 Nạp Lời Bài Hát (Lyrics)";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:titleLabel];
 
     UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Hỗ trợ định dạng có timestamp [00:12.50] hoặc lời thường. Khi tạo text layer, hệ thống sẽ TỰ ĐỘNG điền.";
+    subtitleLabel.text = @"Dán lời bài hát (mỗi dòng 1 câu - tự động lọc sạch timestamp LRC). Lưu hàng đợi hoặc xóa bất cứ lúc nào.";
     subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
     subtitleLabel.numberOfLines = 2;
@@ -690,7 +295,7 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     CGFloat applyW = width - applyX - 60;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Lưu & Kích Hoạt" forState:UIControlStateNormal];
+    [self.applyButton setTitle:@"⚡ Lưu Hàng Đợi Mới" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     self.applyButton.layer.cornerRadius = 10.0;
@@ -716,7 +321,7 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 - (void)clearQueue {
     self.textView.text = @"";
     [self updateLineCount];
-    [[AMLyricsEngine sharedEngine] clear];
+    [[AMLyricsQueueManager sharedManager] clearLyrics];
     if (self.onLyricsLoaded) {
         self.onLyricsLoaded();
     }
@@ -752,23 +357,34 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 }
 
 - (void)updateLineCount {
-    NSArray *lines = [self.textView.text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-    NSUInteger validCount = 0;
-    NSUInteger lrcCount = 0;
-    for (NSString *s in lines) {
+    NSArray *lines = [self extractValidLines:self.textView.text];
+    self.lineCountLabel.text = [NSString stringWithFormat:@"📊 Số dòng: %lu câu hát đã nhập", (unsigned long)lines.count];
+}
+
+- (NSArray<NSString *> *)extractValidLines:(NSString *)rawText {
+    if (!rawText || rawText.length == 0) return @[];
+    NSArray *all = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSMutableArray *valid = [NSMutableArray array];
+    
+    static NSRegularExpression *lrcRegex = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        lrcRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\[\\d{1,2}:\\d{2}(?:[\\.:]\\d{1,3})?\\]\\s*" options:0 error:nil];
+    });
+
+    for (NSString *s in all) {
         NSString *trimmed = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (trimmed.length > 0) {
-            validCount++;
-            if ([trimmed hasPrefix:@"["] && [trimmed containsString:@"]"]) {
-                lrcCount++;
+            if (lrcRegex) {
+                trimmed = [lrcRegex stringByReplacingMatchesInString:trimmed options:0 range:NSMakeRange(0, trimmed.length) withTemplate:@""];
+                trimmed = [trimmed stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            }
+            if (trimmed.length > 0) {
+                [valid addObject:trimmed];
             }
         }
     }
-    if (lrcCount > 0) {
-        self.lineCountLabel.text = [NSString stringWithFormat:@"📊 Số dòng: %lu câu (Có %lu câu LRC timestamp)", (unsigned long)validCount, (unsigned long)lrcCount];
-    } else {
-        self.lineCountLabel.text = [NSString stringWithFormat:@"📊 Số dòng: %lu câu hát", (unsigned long)validCount];
-    }
+    return valid;
 }
 
 - (void)pasteFromClipboard {
@@ -786,17 +402,17 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 
 - (void)applyLyricsToQueue {
     [self.view endEditing:YES];
-    NSString *raw = self.textView.text;
-    if (!raw || raw.length == 0) {
+    NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
+    if (lines.count == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Thông báo"
-                                                                       message:@"Vui lòng dán lời bài hát trước khi lưu."
+                                                                       message:@"Vui lòng dán lời bài hát (ít nhất 1 câu) trước khi lưu."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
-    [[AMLyricsEngine sharedEngine] loadRawLyrics:raw];
+    [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
 
     if (self.onLyricsLoaded) {
         self.onLyricsLoaded();
@@ -807,11 +423,10 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 
 @end
 
-#pragma mark - Home Settings Dashboard Modal (Quản Lý Cài Đặt Tại Trang Chủ)
+#pragma mark - Home Settings Dashboard Modal (Mở từ nút nổi ở Trang Chủ)
 
 @interface AMHomeSettingsViewController : UIViewController
 @property (nonatomic, strong) UILabel *lyricsStatusLabel;
-@property (nonatomic, strong) UISwitch *autoSyncSwitch;
 @end
 
 @implementation AMHomeSettingsViewController
@@ -829,59 +444,52 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     [self.view addSubview:titleLabel];
 
-    // Card 1: Auto Lyrics Engine Setting
-    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 125)];
+    // Card 1: Batch Lyrics Manager (Nạp & Xóa Hàng Đợi)
+    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 95)];
     card1.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
     card1.layer.cornerRadius = 14.0;
     card1.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card1];
 
-    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 90, 22)];
-    l1.text = @"⚡ Tự Động Điền Không Cần Mở Ô Chữ";
+    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 32, 22)];
+    l1.text = @"📝 Quản Lý Hàng Đợi Lời (Lyrics Queue)";
     l1.textColor = [UIColor whiteColor];
-    l1.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card1 addSubview:l1];
 
-    self.autoSyncSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(card1.bounds.size.width - 66, 8, 51, 31)];
-    self.autoSyncSwitch.onTintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    self.autoSyncSwitch.on = AMIsAutoLyricsSyncEnabled();
-    self.autoSyncSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [self.autoSyncSwitch addTarget:self action:@selector(toggleAutoSync:) forControlEvents:UIControlEventValueChanged];
-    [card1 addSubview:self.autoSyncSwitch];
-
-    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, card1.bounds.size.width - 190, 42)];
+    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card1.bounds.size.width - 190, 48)];
     self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:11];
+    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:12];
     self.lyricsStatusLabel.numberOfLines = 2;
     [card1 addSubview:self.lyricsStatusLabel];
     [self refreshLyricsStatus];
 
-    // Nạp Lời Button
+    // Nạp Mới Button
     UIButton *loadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 80, 85, 34);
-    [loadBtn setTitle:@"📝 Nạp Lời" forState:UIControlStateNormal];
+    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 42, 85, 36);
+    [loadBtn setTitle:@"📝 Nạp Mới" forState:UIControlStateNormal];
     [loadBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     loadBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    loadBtn.layer.cornerRadius = 9.0;
+    loadBtn.layer.cornerRadius = 10.0;
     loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     loadBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [loadBtn addTarget:self action:@selector(openLyricsModal) forControlEvents:UIControlEventTouchUpInside];
     [card1 addSubview:loadBtn];
 
-    // Reset Used Button
-    UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    resetBtn.frame = CGRectMake(card1.bounds.size.width - 88, 80, 76, 34);
-    [resetBtn setTitle:@"🔄 Làm Lại" forState:UIControlStateNormal];
-    [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    resetBtn.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
-    resetBtn.layer.cornerRadius = 9.0;
-    resetBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    resetBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [resetBtn addTarget:self action:@selector(resetLyricsStatus) forControlEvents:UIControlEventTouchUpInside];
-    [card1 addSubview:resetBtn];
+    // Xóa Hàng Đợi Button
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(card1.bounds.size.width - 88, 42, 76, 36);
+    [clearBtn setTitle:@"🗑️ Xóa" forState:UIControlStateNormal];
+    [clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
+    clearBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.1 alpha:0.8];
+    clearBtn.layer.cornerRadius = 10.0;
+    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    clearBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [clearBtn addTarget:self action:@selector(clearQueueAction) forControlEvents:UIControlEventTouchUpInside];
+    [card1 addSubview:clearBtn];
 
     // Card 2: Auto Save to Camera Roll
-    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 195, w - 32, 70)];
+    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 168, w - 32, 70)];
     card2.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
     card2.layer.cornerRadius = 14.0;
     card2.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -906,8 +514,8 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     [sw addTarget:self action:@selector(toggleAutoSave:) forControlEvents:UIControlEventValueChanged];
     [card2 addSubview:sw];
 
-    // Card 3: Pro & Engine Status
-    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 275, w - 32, 85)];
+    // Card 3: Pro & Effects Status
+    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 250, w - 32, 80)];
     card3.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
     card3.layer.cornerRadius = 14.0;
     card3.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -919,8 +527,8 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
     l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card3 addSubview:l3];
 
-    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 40)];
-    l3Sub.text = @"🟢 Zero-Click Auto Insert: Tự điền ngay khi tạo Text Layer\n🟢 Tự động ẩn hộp thoại & bàn phím để không gián đoạn\n🟢 Full Premium Pro v6.2.56 Unlocked (4K, 120 FPS)";
+    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Rung Chuông 10s quảng cáo";
     l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
     l3Sub.numberOfLines = 3;
@@ -940,38 +548,23 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 }
 
 - (void)refreshLyricsStatus {
-    AMLyricsEngine *engine = [AMLyricsEngine sharedEngine];
-    if (engine.items.count == 0) {
-        self.lyricsStatusLabel.text = @"Trạng thái: Trống (chưa có lời).";
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) {
+        self.lyricsStatusLabel.text = @"Trạng thái: Trống (chưa có câu nào).";
         self.lyricsStatusLabel.textColor = [UIColor lightGrayColor];
     } else {
-        NSUInteger usedCount = 0;
-        NSUInteger lrcCount = 0;
-        for (AMLyricsItem *it in engine.items) {
-            if (it.isUsed) usedCount++;
-            if (it.timestamp >= 0.0) lrcCount++;
-        }
-        if (lrcCount > 0) {
-            self.lyricsStatusLabel.text = [NSString stringWithFormat:@"Đã nạp %lu câu (Timeline LRC).\n(Đã điền: %lu/%lu câu)", (unsigned long)engine.items.count, (unsigned long)usedCount, (unsigned long)engine.items.count];
-        } else {
-            self.lyricsStatusLabel.text = [NSString stringWithFormat:@"Đang có %lu câu tuần tự.\n(Đã điền: %lu/%lu câu)", (unsigned long)engine.items.count, (unsigned long)usedCount, (unsigned long)engine.items.count];
-        }
+        self.lyricsStatusLabel.text = [NSString stringWithFormat:@"Đang có %lu câu trong hàng đợi.\n(Hiện tại: #%lu/%lu)", (unsigned long)mgr.lyricsLines.count, (unsigned long)(mgr.currentIndex + 1), (unsigned long)mgr.lyricsLines.count];
         self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
     }
 }
 
-- (void)toggleAutoSync:(UISwitch *)sw {
-    AMSetAutoLyricsSyncEnabled(sw.on);
-    [AMLyricsEngine sharedEngine].autoSyncEnabled = sw.on;
+- (void)clearQueueAction {
+    [[AMLyricsQueueManager sharedManager] clearLyrics];
+    [self refreshLyricsStatus];
 }
 
 - (void)toggleAutoSave:(UISwitch *)sw {
     AMSetAutoSaveEnabled(sw.on);
-}
-
-- (void)resetLyricsStatus {
-    [[AMLyricsEngine sharedEngine] resetUsedStatus];
-    [self refreshLyricsStatus];
 }
 
 - (void)openLyricsModal {
@@ -986,6 +579,293 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 
 - (void)dismissSelf {
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Rock-Solid Pixel-Perfect Layout)
+
+@interface AMMinimalLyricsBar : UIView
+@property (nonatomic, weak) UIViewController *targetVC;
+@property (nonatomic, strong) UIView *capsule;
+@property (nonatomic, strong) UIButton *prevBtn;
+@property (nonatomic, strong) UIButton *nextBtn;
+@property (nonatomic, strong) UIButton *versePillBtn;
+@property (nonatomic, strong) UIButton *menuBtn;
+@property (nonatomic, strong) UIButton *closeBtn;
++ (instancetype)barForViewController:(UIViewController *)vc;
+- (void)refreshDisplay;
+@end
+
+@implementation AMMinimalLyricsBar
+
++ (instancetype)barForViewController:(UIViewController *)vc {
+    CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
+    bar.targetVC = vc;
+    bar.backgroundColor = [UIColor clearColor];
+
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
+    capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
+    capsule.layer.cornerRadius = 18.0;
+    capsule.layer.borderWidth = 1.0;
+    capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.35].CGColor;
+    capsule.clipsToBounds = YES;
+    [bar addSubview:capsule];
+    bar.capsule = capsule;
+
+    // 1. Prev Button [‹]
+    UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
+    [prev setTitle:@"‹" forState:UIControlStateNormal];
+    [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    prev.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    prev.layer.cornerRadius = 14.0;
+    [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:prev];
+    bar.prevBtn = prev;
+
+    // 2. Next Button [›]
+    UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
+    [next setTitle:@"›" forState:UIControlStateNormal];
+    [next setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    next.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    next.layer.cornerRadius = 14.0;
+    [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:next];
+    bar.nextBtn = next;
+
+    // 3. Close Button [✕]
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    close.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    close.layer.cornerRadius = 14.0;
+    [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:close];
+    bar.closeBtn = close;
+
+    // 4. Menu Button [📋] (Nạp Lời / Chọn Câu / Xóa)
+    UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
+    [menu setTitle:@"📋" forState:UIControlStateNormal];
+    menu.titleLabel.font = [UIFont systemFontOfSize:14];
+    menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+    menu.layer.cornerRadius = 14.0;
+    [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:menu];
+    bar.menuBtn = menu;
+
+    // 5. Verse Pill Button [⚡ #1/N: "Lời câu..."]
+    UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
+    verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.18];
+    verse.layer.cornerRadius = 14.0;
+    verse.layer.borderWidth = 0.8;
+    verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
+    [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    verse.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    verse.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    verse.contentEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 8);
+    [verse addTarget:bar action:@selector(verseTapped) forControlEvents:UIControlEventTouchUpInside];
+    [capsule addSubview:verse];
+    bar.versePillBtn = verse;
+
+    [bar setNeedsLayout];
+    [bar refreshDisplay];
+    return bar;
+}
+
+- (CGSize)intrinsicContentSize {
+    return CGSizeMake(UIViewNoIntrinsicMetric, 42.0);
+}
+
+- (CGSize)sizeThatFits:(CGSize)size {
+    return CGSizeMake(size.width, 42.0);
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    UIEdgeInsets insets = self.safeAreaInsets;
+    CGFloat w = self.bounds.size.width;
+    CGFloat padLeft = MAX(8.0, insets.left);
+    CGFloat padRight = MAX(8.0, insets.right);
+    
+    CGFloat capW = w - padLeft - padRight;
+    if (capW < 100.0) capW = [UIScreen mainScreen].bounds.size.width - 16.0;
+    
+    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 36.0);
+
+    CGFloat btnH = 28.0;
+    CGFloat btnY = 4.0;
+
+    self.prevBtn.frame = CGRectMake(4.0, btnY, 28.0, btnH);
+    self.nextBtn.frame = CGRectMake(36.0, btnY, 28.0, btnH);
+
+    self.closeBtn.frame = CGRectMake(capW - 32.0, btnY, 28.0, btnH);
+    self.menuBtn.frame = CGRectMake(capW - 64.0, btnY, 28.0, btnH);
+
+    CGFloat centerStartX = 68.0;
+    CGFloat centerW = capW - 68.0 - 68.0;
+    if (centerW < 60.0) centerW = 60.0;
+    self.versePillBtn.frame = CGRectMake(centerStartX, btnY, centerW, btnH);
+}
+
+- (void)refreshDisplay {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    
+    // Always keep all buttons visible!
+    self.prevBtn.hidden = NO;
+    self.nextBtn.hidden = NO;
+    self.menuBtn.hidden = NO;
+    self.closeBtn.hidden = NO;
+    self.versePillBtn.hidden = NO;
+
+    if (mgr.lyricsLines.count == 0) {
+        self.prevBtn.enabled = NO;
+        self.prevBtn.alpha = 0.35;
+        self.nextBtn.enabled = NO;
+        self.nextBtn.alpha = 0.35;
+        [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    } else {
+        self.prevBtn.enabled = (mgr.currentIndex > 0);
+        self.prevBtn.alpha = (mgr.currentIndex > 0) ? 1.0 : 0.4;
+
+        self.nextBtn.enabled = (mgr.currentIndex + 1 < mgr.lyricsLines.count);
+        self.nextBtn.alpha = (mgr.currentIndex + 1 < mgr.lyricsLines.count) ? 1.0 : 0.4;
+
+        NSUInteger cur = mgr.currentIndex + 1;
+        NSString *line = [mgr currentLineText] ?: @"";
+        NSString *title = [NSString stringWithFormat:@"⚡ %lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
+        [self.versePillBtn setTitle:title forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    }
+}
+
+- (void)verseTapped {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) {
+        [self loadTapped];
+        return;
+    }
+
+    NSString *line = [mgr currentLineText];
+    if (!line) return;
+
+    UITextView *tv = nil;
+    if ([self.targetVC respondsToSelector:@selector(inputTextView)]) {
+        tv = [self.targetVC valueForKey:@"inputTextView"];
+    }
+    if (!tv) {
+        for (UIView *sub in self.targetVC.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        tv.text = line;
+        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+            [tv.delegate textViewDidChange:tv];
+        }
+        if ([tv.delegate respondsToSelector:@selector(textView:shouldChangeTextInRange:replacementText:)]) {
+            [tv.delegate textView:tv shouldChangeTextInRange:NSMakeRange(0, tv.text.length) replacementText:line];
+        }
+        [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
+
+        @try {
+            [self.targetVC setValue:line forKey:@"appearText"];
+        } @catch (NSException *e) {}
+
+        [mgr consumeNextLineText];
+        [self refreshDisplay];
+
+        AudioServicesPlaySystemSound(1519);
+    }
+}
+
+- (void)prevTapped {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex > 0) {
+        mgr.currentIndex--;
+        [mgr saveToDisk];
+    }
+    [self refreshDisplay];
+}
+
+- (void)nextTapped {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.currentIndex + 1 < mgr.lyricsLines.count) {
+        mgr.currentIndex++;
+        [mgr saveToDisk];
+    }
+    [self refreshDisplay];
+}
+
+- (void)closeTapped {
+    [self.targetVC.view endEditing:YES];
+}
+
+- (void)menuTapped {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Quản Lý Lời Bài Hát"
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📝 Nạp Lời Mới / Chỉnh Sửa" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self loadTapped];
+    }]];
+
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count > 0) {
+        [sheet addAction:[UIAlertAction actionWithTitle:@"🔄 Bắt Đầu Lại Từ Câu #1" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [mgr resetToFirstVerse];
+            [self refreshDisplay];
+        }]];
+
+        [sheet addAction:[UIAlertAction actionWithTitle:@"🎯 Chọn Câu Cụ Thể Trong Danh Sách" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [self openVersePicker];
+        }]];
+
+        [sheet addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Sạch Hàng Đợi" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+            [mgr clearLyrics];
+            [self refreshDisplay];
+        }]];
+    }
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self.targetVC presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)openVersePicker {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Chọn Câu Hát Bắt Đầu"
+                                                                    message:nil
+                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+
+    for (NSUInteger i = 0; i < mgr.lyricsLines.count && i < 25; i++) {
+        NSString *verseTitle = [NSString stringWithFormat:@"#%lu: \"%@\"", (unsigned long)(i + 1), mgr.lyricsLines[i]];
+        [picker addAction:[UIAlertAction actionWithTitle:verseTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [mgr jumpToVerseIndex:i];
+            [self refreshDisplay];
+        }]];
+    }
+
+    [picker addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+    [self.targetVC presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)loadTapped {
+    AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
+    modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    __weak typeof(self) weakSelf = self;
+    modal.onLyricsLoaded = ^{
+        [weakSelf refreshDisplay];
+    };
+    [self.targetVC presentViewController:modal animated:YES completion:nil];
 }
 
 @end
@@ -1088,6 +968,58 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
 
 @end
 
+#pragma mark - Hook TextInputVC & UITextView (Seamless Automatic Accessory Bar Binding)
+
+static void (*orig_TextInputVC_viewDidAppear)(UIViewController *, SEL, BOOL);
+
+static void hook_TextInputVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    if (orig_TextInputVC_viewDidAppear) {
+        orig_TextInputVC_viewDidAppear(self, _cmd, animated);
+    }
+
+    UITextView *tv = nil;
+    if ([self respondsToSelector:@selector(inputTextView)]) {
+        tv = [self valueForKey:@"inputTextView"];
+    }
+    if (!tv) {
+        for (UIView *sub in self.view.subviews) {
+            if ([sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:self];
+        tv.inputAccessoryView = bar;
+    }
+}
+
+static BOOL (*orig_UITextView_becomeFirstResponder)(UITextView *, SEL);
+
+static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
+    if (self.inputAccessoryView == nil) {
+        UIResponder *responder = self;
+        while ((responder = [responder nextResponder])) {
+            if ([responder isKindOfClass:[UIViewController class]]) {
+                break;
+            }
+        }
+        if (responder) {
+            NSString *vcName = NSStringFromClass([responder class]);
+            if ([vcName containsString:@"TextInput"] || [vcName containsString:@"Edit"] || [vcName containsString:@"Text"]) {
+                AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:(UIViewController *)responder];
+                self.inputAccessoryView = bar;
+            }
+        }
+    }
+    if (orig_UITextView_becomeFirstResponder) {
+        return orig_UITextView_becomeFirstResponder(self, _cmd);
+    }
+    return YES;
+}
+
 #pragma mark - 6-Layer Bulletproof Anti-Telegram, Anti-Ads & 10s Vibration Annihilator
 
 static BOOL AMIsForbiddenString(NSString *str) {
@@ -1148,6 +1080,7 @@ static void (*orig_UIWindow_makeKeyAndVisible)(UIWindow *, SEL);
 
 static void hook_UIWindow_makeKeyAndVisible(UIWindow *self, SEL _cmd) {
     NSString *clsName = NSStringFromClass([self class]);
+    // ALWAYS preserve keyboard and text system windows!
     if ([clsName containsString:@"Keyboard"] || 
         [clsName containsString:@"TextEffects"] || 
         [clsName containsString:@"InputSet"] ||
@@ -1226,7 +1159,7 @@ static void hook_UIViewController_presentViewController(UIViewController *self, 
             NSString *message = alert.message ?: @"";
             NSString *combined = [NSString stringWithFormat:@"%@ %@", title, message];
 
-            BOOL isOurAlert = [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Lyrics"] || [title containsString:@"Cài Đặt"] || [title containsString:@"Quản Lý Lời"];
+            BOOL isOurAlert = [title containsString:@"Alight Motion Pro"] || [title containsString:@"Thông báo"] || [title containsString:@"Lyrics"] || [title containsString:@"Cài Đặt"] || [title containsString:@"Quản Lý Lời"] || [title containsString:@"Chọn Câu"];
 
             if (!isOurAlert && AMIsForbiddenString(combined)) {
                 if (completion) completion();
@@ -1419,22 +1352,13 @@ __attribute__((constructor)) static void initAutoExportAndBatchLyricsMod() {
         method_setImplementation(openURLOptMethod, (IMP)hook_UIApplication_openURL_options_completionHandler);
     }
 
-    // 8. Hook TextInputVC, EditTextPanelVC & UITextView (Zero-Click Auto Insertion)
+    // 8. Hook TextInputVC & UITextView
     Class textInputClass = objc_getClass("_TtC12AlightMotion11TextInputVC");
     if (textInputClass) {
         Method textAppearMethod = class_getInstanceMethod(textInputClass, @selector(viewDidAppear:));
         if (textAppearMethod) {
             orig_TextInputVC_viewDidAppear = (void *)method_getImplementation(textAppearMethod);
             method_setImplementation(textAppearMethod, (IMP)hook_TextInputVC_viewDidAppear);
-        }
-    }
-
-    Class editPanelClass = objc_getClass("_TtC12AlightMotion15EditTextPanelVC");
-    if (editPanelClass) {
-        Method m = class_getInstanceMethod(editPanelClass, @selector(viewDidAppear:));
-        if (m) {
-            orig_EditTextPanelVC_viewDidAppear = (void *)method_getImplementation(m);
-            method_setImplementation(m, (IMP)hook_EditTextPanelVC_viewDidAppear);
         }
     }
 
