@@ -13,6 +13,7 @@ on:
           - full
           - minimal
           - hooks
+          - report
 
 jobs:
   build:
@@ -57,6 +58,7 @@ jobs:
           case "$profile" in
             minimal) make_args="BUILD_B=1" ;;
             hooks) make_args="HOOKS=1" ;;
+            report) make_args="CRASH_REPORTING=1" ;;
             full) make_args="" ;;
             *) echo "Unknown profile: $profile"; exit 2 ;;
           esac
