@@ -592,7 +592,7 @@ static void UMInstallDeferredFeatures(void) {
         safeSwizzle([UIApplication class], @selector(openURL:options:completionHandler:), @selector(um_openURL:options:completionHandler:));
 #endif
         NSLog(@"UM_BOOT_03_APP_READY");
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_UTILITY, 0), ^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
             [[UMEffectRegistry sharedRegistry] loadAllUltraEffects];
             NSLog(@"UM_BOOT_06_REGISTRY_READY");
         });
