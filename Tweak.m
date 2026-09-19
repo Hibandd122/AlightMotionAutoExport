@@ -178,17 +178,154 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     return self.currentIndex < self.lyricsLines.count;
 }
 
+- (NSString *)allLyricsFullText {
+    if (self.lyricsLines.count == 0) return nil;
+    return [self.lyricsLines componentsJoinedByString:@"\n"];
+}
+
+- (NSString *)allRemainingLyricsText {
+    if (self.lyricsLines.count == 0 || self.currentIndex >= self.lyricsLines.count) return nil;
+    NSArray *sub = [self.lyricsLines subarrayWithRange:NSMakeRange(self.currentIndex, self.lyricsLines.count - self.currentIndex)];
+    return [sub componentsJoinedByString:@"\n"];
+}
+
 @end
 
-#pragma mark - Batch Lyrics Inserter Modal View Controller (With Smart LRC Cleaner)
+#pragma mark - Floating Toast HUD (iOS 18 Liquid Glass Style)
+
+static void AMShowToast(NSString *message) {
+    if (!message || message.length == 0) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
+        if (!window) return;
+
+        UIView *existing = [window viewWithTag:987654];
+        if (existing) [existing removeFromSuperview];
+
+        UIVisualEffectView *toast = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        toast.tag = 987654;
+        toast.layer.cornerRadius = 18.0;
+        toast.layer.borderWidth = 1.2;
+        toast.layer.borderColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.75].CGColor;
+        toast.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.4].CGColor;
+        toast.layer.shadowRadius = 8.0;
+        toast.layer.shadowOpacity = 0.8;
+        toast.layer.shadowOffset = CGSizeMake(0, 2);
+        toast.clipsToBounds = YES;
+        toast.alpha = 0.0;
+
+        UILabel *lbl = [[UILabel alloc] init];
+        lbl.text = message;
+        lbl.textColor = [UIColor whiteColor];
+        lbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        lbl.textAlignment = NSTextAlignmentCenter;
+        lbl.numberOfLines = 1;
+        [toast.contentView addSubview:lbl];
+
+        CGSize textSize = [message sizeWithAttributes:@{NSFontAttributeName: lbl.font}];
+        CGFloat toastW = MIN(window.bounds.size.width - 32.0, textSize.width + 36.0);
+        CGFloat toastH = 36.0;
+        CGFloat topY = (window.safeAreaInsets.top > 0) ? (window.safeAreaInsets.top + 6.0) : 34.0;
+
+        toast.frame = CGRectMake((window.bounds.size.width - toastW) / 2.0, topY, toastW, toastH);
+        lbl.frame = toast.contentView.bounds;
+
+        [window addSubview:toast];
+        [window bringSubviewToFront:toast];
+
+        [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:0 animations:^{
+            toast.alpha = 1.0;
+            toast.transform = CGAffineTransformMakeScale(1.03, 1.03);
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.2 animations:^{
+                toast.transform = CGAffineTransformIdentity;
+            }];
+        }];
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.3 animations:^{
+                toast.alpha = 0.0;
+                toast.transform = CGAffineTransformMakeTranslation(0, -10);
+            } completion:^(BOOL finished) {
+                [toast removeFromSuperview];
+            }];
+        });
+    });
+}
+
+#pragma mark - Unified Text Injection Engine
+
+static UITextView *AMFindActiveTextViewInHierarchy(UIViewController *vc) {
+    if (!vc) return nil;
+    if ([vc respondsToSelector:@selector(inputTextView)]) {
+        id tv = [vc valueForKey:@"inputTextView"];
+        if ([tv isKindOfClass:[UITextView class]]) return (UITextView *)tv;
+    }
+    for (UIView *sub in vc.view.subviews) {
+        if ([sub isKindOfClass:[UITextView class]]) {
+            return (UITextView *)sub;
+        }
+    }
+    return nil;
+}
+
+static BOOL AMInjectTextToActiveInput(NSString *text, UIViewController *targetVC) {
+    if (!text || text.length == 0) return NO;
+
+    UITextView *tv = AMFindActiveTextViewInHierarchy(targetVC);
+
+    if (!tv) {
+        UIWindow *window = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
+        for (UIView *sub in window.subviews) {
+            if ([sub isFirstResponder] && [sub isKindOfClass:[UITextView class]]) {
+                tv = (UITextView *)sub;
+                break;
+            }
+        }
+    }
+
+    if (tv) {
+        tv.text = text;
+        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
+            [tv.delegate textViewDidChange:tv];
+        }
+        if ([tv.delegate respondsToSelector:@selector(textView:shouldChangeTextInRange:replacementText:)]) {
+            [tv.delegate textView:tv shouldChangeTextInRange:NSMakeRange(0, tv.text.length) replacementText:text];
+        }
+        [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
+
+        if (targetVC) {
+            @try {
+                [targetVC setValue:text forKey:@"appearText"];
+            } @catch (NSException *e) {}
+            @try {
+                if ([targetVC respondsToSelector:@selector(textDidChange:)]) {
+                    [targetVC performSelector:@selector(textDidChange:) withObject:tv];
+                }
+            } @catch (NSException *e) {}
+        }
+
+        AudioServicesPlaySystemSound(1519);
+        return YES;
+    }
+    return NO;
+}
+
+#pragma mark - Modern Liquid Glass Batch Lyrics Modal (Studio Edition)
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
+@property (nonatomic, strong) UIVisualEffectView *blurBackgroundView;
+@property (nonatomic, strong) UIView *containerCard;
 @property (nonatomic, strong) UITextView *textView;
-@property (nonatomic, strong) UILabel *lineCountLabel;
-@property (nonatomic, strong) UIButton *pasteButton;
-@property (nonatomic, strong) UIButton *clearQueueButton;
-@property (nonatomic, strong) UIButton *applyButton;
-@property (nonatomic, strong) UIButton *closeButton;
+@property (nonatomic, strong) UILabel *statusBadgeLabel;
+@property (nonatomic, strong) UIButton *pasteBtn;
+@property (nonatomic, strong) UIButton *cleanLrcBtn;
+@property (nonatomic, strong) UIButton *demoBtn;
+@property (nonatomic, strong) UIButton *clearBtn;
+@property (nonatomic, strong) UIButton *batchApplyAllBtn;
+@property (nonatomic, strong) UIButton *saveQueueBtn;
+@property (nonatomic, strong) UIButton *closeBtn;
+@property (nonatomic, weak) UIViewController *parentTargetVC;
 @property (nonatomic, copy) void (^onLyricsLoaded)(void);
 @end
 
@@ -196,20 +333,28 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.07 blue:0.10 alpha:0.98];
+    self.view.backgroundColor = [UIColor colorWithRed:0.04 green:0.05 blue:0.08 alpha:0.85];
+
+    // Background blur
+    UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    self.blurBackgroundView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+    self.blurBackgroundView.frame = self.view.bounds;
+    self.blurBackgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:self.blurBackgroundView];
 
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
     tap.cancelsTouchesInView = NO;
     [self.view addGestureRecognizer:tap];
 
     [self setupHeader];
-    [self setupTextView];
-    [self setupButtons];
+    [self setupToolbar];
+    [self setupEditor];
+    [self setupActionButtons];
 
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count > 0) {
         self.textView.text = [mgr.lyricsLines componentsJoinedByString:@"\n"];
-        [self updateLineCount];
+        [self updateStatusLabel];
     }
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
@@ -221,97 +366,155 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)setupHeader {
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
-    titleLabel.text = @"📝 Nạp Lời Bài Hát (Lyrics)";
+    CGFloat w = self.view.bounds.size.width;
+
+    UILabel *badge = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, 170, 20)];
+    badge.text = @"⚡ PRO AUTO TEXT & LYRICS";
+    badge.textColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    badge.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightBold];
+    badge.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:badge];
+
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 36, w - 80, 26)];
+    titleLabel.text = @"🎵 Studio Lời & Nhập Văn Bản";
     titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
+    titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:titleLabel];
 
-    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Dán lời bài hát (mỗi dòng 1 câu - tự động lọc sạch timestamp LRC). Lưu hàng đợi hoặc xóa bất cứ lúc nào.";
-    subtitleLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
-    subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    subtitleLabel.numberOfLines = 2;
-    subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:subtitleLabel];
+    // Close Button top-right
+    self.closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.closeBtn.frame = CGRectMake(w - 48, 20, 32, 32);
+    [self.closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+    [self.closeBtn setTitleColor:[UIColor colorWithWhite:0.8 alpha:1.0] forState:UIControlStateNormal];
+    self.closeBtn.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.8];
+    self.closeBtn.layer.cornerRadius = 16.0;
+    self.closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    [self.closeBtn addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
+    self.closeBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.view addSubview:self.closeBtn];
 }
 
-- (void)setupTextView {
-    CGFloat yPos = 82;
-    CGFloat bottomMargin = 110;
+- (void)setupToolbar {
+    CGFloat y = 68;
+    CGFloat h = 32;
+
+    // 1. Paste Button
+    self.pasteBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.pasteBtn.frame = CGRectMake(16, y, 76, h);
+    [self.pasteBtn setTitle:@"📋 Dán" forState:UIControlStateNormal];
+    [self.pasteBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.pasteBtn.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.85];
+    self.pasteBtn.layer.cornerRadius = 10.0;
+    self.pasteBtn.layer.borderWidth = 0.8;
+    self.pasteBtn.layer.borderColor = [UIColor colorWithWhite:0.35 alpha:0.5].CGColor;
+    self.pasteBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [self.pasteBtn addTarget:self action:@selector(pasteFromClipboard) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.pasteBtn];
+
+    // 2. Clean LRC Button
+    self.cleanLrcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.cleanLrcBtn.frame = CGRectMake(98, y, 92, h);
+    [self.cleanLrcBtn setTitle:@"🧹 Lọc LRC" forState:UIControlStateNormal];
+    [self.cleanLrcBtn setTitleColor:[UIColor colorWithRed:0.30 green:0.85 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+    self.cleanLrcBtn.backgroundColor = [UIColor colorWithRed:0.10 green:0.20 blue:0.30 alpha:0.8];
+    self.cleanLrcBtn.layer.cornerRadius = 10.0;
+    self.cleanLrcBtn.layer.borderWidth = 0.8;
+    self.cleanLrcBtn.layer.borderColor = [UIColor colorWithRed:0.20 green:0.60 blue:0.90 alpha:0.5].CGColor;
+    self.cleanLrcBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [self.cleanLrcBtn addTarget:self action:@selector(cleanLrcTimestamps) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.cleanLrcBtn];
+
+    // 3. Demo Button
+    self.demoBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.demoBtn.frame = CGRectMake(196, y, 74, h);
+    [self.demoBtn setTitle:@"✨ Mẫu" forState:UIControlStateNormal];
+    [self.demoBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.85 blue:0.3 alpha:1.0] forState:UIControlStateNormal];
+    self.demoBtn.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.85];
+    self.demoBtn.layer.cornerRadius = 10.0;
+    self.demoBtn.layer.borderWidth = 0.8;
+    self.demoBtn.layer.borderColor = [UIColor colorWithWhite:0.35 alpha:0.5].CGColor;
+    self.demoBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [self.demoBtn addTarget:self action:@selector(insertDemoLyrics) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.demoBtn];
+
+    // 4. Clear Button
+    self.clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.clearBtn.frame = CGRectMake(self.view.bounds.size.width - 86, y, 70, h);
+    [self.clearBtn setTitle:@"🗑️ Xóa" forState:UIControlStateNormal];
+    [self.clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
+    self.clearBtn.backgroundColor = [UIColor colorWithRed:0.35 green:0.12 blue:0.12 alpha:0.75];
+    self.clearBtn.layer.cornerRadius = 10.0;
+    self.clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [self.clearBtn addTarget:self action:@selector(clearQueue) forControlEvents:UIControlEventTouchUpInside];
+    self.clearBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.view addSubview:self.clearBtn];
+}
+
+- (void)setupEditor {
+    CGFloat yPos = 110;
+    CGFloat bottomMargin = 126;
     CGFloat h = self.view.bounds.size.height - yPos - bottomMargin;
-    if (h < 150) h = 150;
+    if (h < 130) h = 130;
 
     self.textView = [[UITextView alloc] initWithFrame:CGRectMake(16, yPos, self.view.bounds.size.width - 32, h)];
-    self.textView.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
+    self.textView.backgroundColor = [UIColor colorWithRed:0.08 green:0.10 blue:0.14 alpha:0.9];
     self.textView.textColor = [UIColor whiteColor];
-    self.textView.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    self.textView.layer.cornerRadius = 12.0;
+    self.textView.font = [UIFont systemFontOfSize:14.5 weight:UIFontWeightMedium];
+    self.textView.layer.cornerRadius = 14.0;
     self.textView.layer.borderWidth = 1.2;
-    self.textView.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
+    self.textView.layer.borderColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.55].CGColor;
+    self.textView.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.3].CGColor;
+    self.textView.layer.shadowRadius = 8.0;
+    self.textView.layer.shadowOpacity = 0.5;
+    self.textView.layer.shadowOffset = CGSizeMake(0, 3);
+    self.textView.textContainerInset = UIEdgeInsetsMake(12, 12, 12, 12);
     self.textView.delegate = self;
     self.textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.textView];
 
-    self.lineCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yPos + h + 6, self.view.bounds.size.width - 40, 20)];
-    self.lineCountLabel.text = @"📊 Số dòng: 0 câu hát đã nhập";
-    self.lineCountLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    self.lineCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    self.lineCountLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-    [self.view addSubview:self.lineCountLabel];
+    self.statusBadgeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yPos + h + 6, self.view.bounds.size.width - 40, 22)];
+    self.statusBadgeLabel.text = @"📊 Hàng đợi: 0 câu hát sẵn sàng";
+    self.statusBadgeLabel.textColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    self.statusBadgeLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    self.statusBadgeLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+    [self.view addSubview:self.statusBadgeLabel];
 }
 
-- (void)setupButtons {
-    CGFloat bottomY = self.view.bounds.size.height - 54;
-    CGFloat width = self.view.bounds.size.width;
+- (void)setupActionButtons {
+    CGFloat bottomY = self.view.bounds.size.height - 62;
+    CGFloat w = self.view.bounds.size.width;
+    CGFloat halfW = (w - 40) / 2.0;
 
-    // Paste Button
-    self.pasteButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.pasteButton.frame = CGRectMake(16, bottomY, 64, 42);
-    [self.pasteButton setTitle:@"📋 Dán" forState:UIControlStateNormal];
-    [self.pasteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.pasteButton.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
-    self.pasteButton.layer.cornerRadius = 10.0;
-    self.pasteButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    [self.pasteButton addTarget:self action:@selector(pasteFromClipboard) forControlEvents:UIControlEventTouchUpInside];
-    self.pasteButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:self.pasteButton];
+    // 1. Super Action: 1-Tap Batch Apply All into Active Project Text Layer
+    self.batchApplyAllBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.batchApplyAllBtn.frame = CGRectMake(16, bottomY, halfW + 15, 46);
+    [self.batchApplyAllBtn setTitle:@"🚀 1-Chạm Nhập Toàn Bộ" forState:UIControlStateNormal];
+    [self.batchApplyAllBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    self.batchApplyAllBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    self.batchApplyAllBtn.layer.cornerRadius = 14.0;
+    self.batchApplyAllBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightHeavy];
+    self.batchApplyAllBtn.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.6].CGColor;
+    self.batchApplyAllBtn.layer.shadowRadius = 8.0;
+    self.batchApplyAllBtn.layer.shadowOpacity = 0.7;
+    self.batchApplyAllBtn.layer.shadowOffset = CGSizeMake(0, 3);
+    [self.batchApplyAllBtn addTarget:self action:@selector(batchApplyAllToActiveLayer) forControlEvents:UIControlEventTouchUpInside];
+    self.batchApplyAllBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:self.batchApplyAllBtn];
 
-    // Clear Queue Button
-    self.clearQueueButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.clearQueueButton.frame = CGRectMake(86, bottomY, 78, 42);
-    [self.clearQueueButton setTitle:@"🗑️ Xóa Hết" forState:UIControlStateNormal];
-    [self.clearQueueButton setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
-    self.clearQueueButton.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.1 alpha:0.8];
-    self.clearQueueButton.layer.cornerRadius = 10.0;
-    self.clearQueueButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    [self.clearQueueButton addTarget:self action:@selector(clearQueue) forControlEvents:UIControlEventTouchUpInside];
-    self.clearQueueButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
-    [self.view addSubview:self.clearQueueButton];
-
-    // Save Queue Button
-    CGFloat applyX = 170;
-    CGFloat applyW = width - applyX - 60;
-    self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Lưu Hàng Đợi Mới" forState:UIControlStateNormal];
-    [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    self.applyButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    self.applyButton.layer.cornerRadius = 10.0;
-    self.applyButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-    [self.applyButton addTarget:self action:@selector(applyLyricsToQueue) forControlEvents:UIControlEventTouchUpInside];
-    self.applyButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:self.applyButton];
-
-    // Close Button
-    self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.closeButton.frame = CGRectMake(width - 54, bottomY, 44, 42);
-    [self.closeButton setTitle:@"Đóng" forState:UIControlStateNormal];
-    [self.closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
-    [self.closeButton addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
-    self.closeButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin;
-    [self.view addSubview:self.closeButton];
+    // 2. Action: Save Queue (For verse-by-verse accessory navigation)
+    self.saveQueueBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.saveQueueBtn.frame = CGRectMake(16 + halfW + 25, bottomY, halfW - 25, 46);
+    [self.saveQueueBtn setTitle:@"💾 Lưu Từng Câu" forState:UIControlStateNormal];
+    [self.saveQueueBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.saveQueueBtn.backgroundColor = [UIColor colorWithRed:0.18 green:0.22 blue:0.30 alpha:0.95];
+    self.saveQueueBtn.layer.cornerRadius = 14.0;
+    self.saveQueueBtn.layer.borderWidth = 1.0;
+    self.saveQueueBtn.layer.borderColor = [UIColor colorWithRed:0.30 green:0.80 blue:1.0 alpha:0.5].CGColor;
+    self.saveQueueBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    [self.saveQueueBtn addTarget:self action:@selector(applyLyricsToQueue) forControlEvents:UIControlEventTouchUpInside];
+    self.saveQueueBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin;
+    [self.view addSubview:self.saveQueueBtn];
 }
 
 - (void)dismissKeyboard {
@@ -320,11 +523,12 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)clearQueue {
     self.textView.text = @"";
-    [self updateLineCount];
+    [self updateStatusLabel];
     [[AMLyricsQueueManager sharedManager] clearLyrics];
     if (self.onLyricsLoaded) {
         self.onLyricsLoaded();
     }
+    AMShowToast(@"🗑️ Đã xóa sạch hàng đợi lời bài hát");
 }
 
 - (void)keyboardWillShow:(NSNotification *)notification {
@@ -335,8 +539,8 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     [UIView animateWithDuration:duration animations:^{
         CGRect frame = self.textView.frame;
-        frame.size.height = self.view.bounds.size.height - 82 - keyboardHeight - 10;
-        if (frame.size.height < 100) frame.size.height = 100;
+        frame.size.height = self.view.bounds.size.height - 110 - keyboardHeight - 12;
+        if (frame.size.height < 90) frame.size.height = 90;
         self.textView.frame = frame;
     }];
 }
@@ -347,25 +551,25 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     [UIView animateWithDuration:duration animations:^{
         CGRect frame = self.textView.frame;
-        frame.size.height = self.view.bounds.size.height - 82 - 110;
+        frame.size.height = self.view.bounds.size.height - 110 - 126;
         self.textView.frame = frame;
     }];
 }
 
 - (void)textViewDidChange:(UITextView *)textView {
-    [self updateLineCount];
+    [self updateStatusLabel];
 }
 
-- (void)updateLineCount {
+- (void)updateStatusLabel {
     NSArray *lines = [self extractValidLines:self.textView.text];
-    self.lineCountLabel.text = [NSString stringWithFormat:@"📊 Số dòng: %lu câu hát đã nhập", (unsigned long)lines.count];
+    self.statusBadgeLabel.text = [NSString stringWithFormat:@"📊 Hàng đợi: %lu câu hát đã sẵn sàng", (unsigned long)lines.count];
 }
 
 - (NSArray<NSString *> *)extractValidLines:(NSString *)rawText {
     if (!rawText || rawText.length == 0) return @[];
     NSArray *all = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
     NSMutableArray *valid = [NSMutableArray array];
-    
+
     static NSRegularExpression *lrcRegex = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -391,8 +595,27 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     UIPasteboard *pb = [UIPasteboard generalPasteboard];
     if (pb.string && pb.string.length > 0) {
         self.textView.text = pb.string;
-        [self updateLineCount];
+        [self cleanLrcTimestamps];
+        [self updateStatusLabel];
+        AMShowToast(@"📋 Đã dán và tự động chuẩn hóa!");
+    } else {
+        AMShowToast(@"⚠️ Bộ nhớ tạm đang trống!");
     }
+}
+
+- (void)cleanLrcTimestamps {
+    NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
+    if (lines.count > 0) {
+        self.textView.text = [lines componentsJoinedByString:@"\n"];
+        [self updateStatusLabel];
+        AMShowToast(@"🧹 Đã lọc sạch toàn bộ timestamp LRC!");
+    }
+}
+
+- (void)insertDemoLyrics {
+    self.textView.text = @"Em ơi có biết ngoài kia gió đang về\nNghe từng hạt mưa rơi bên hiên não nề\nTình yêu thuở nào giờ trôi theo mây gió\nChỉ còn nỗi nhớ đong đầy nơi góc phố xưa";
+    [self updateStatusLabel];
+    AMShowToast(@"✨ Đã nạp lời bài hát demo!");
 }
 
 - (void)dismissModal {
@@ -400,30 +623,53 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
-- (void)applyLyricsToQueue {
+// SUPER FEATURE: 1-Chạm Nhập Toàn Bộ Text Vào Layer Đang Chọn
+- (void)batchApplyAllToActiveLayer {
     [self.view endEditing:YES];
     NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
     if (lines.count == 0) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Thông báo"
-                                                                       message:@"Vui lòng dán lời bài hát (ít nhất 1 câu) trước khi lưu."
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+        AMShowToast(@"⚠️ Vui lòng nhập hoặc dán lời bài hát!");
         return;
     }
 
     [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
-
     if (self.onLyricsLoaded) {
         self.onLyricsLoaded();
     }
 
-    [self dismissViewControllerAnimated:YES completion:nil];
+    NSString *allText = [lines componentsJoinedByString:@"\n"];
+    BOOL injected = AMInjectTextToActiveInput(allText, self.parentTargetVC);
+
+    [self dismissViewControllerAnimated:YES completion:^{
+        if (injected) {
+            AMShowToast([NSString stringWithFormat:@"🚀 Đã 1-chạm nhập toàn bộ %lu câu!", (unsigned long)lines.count]);
+        } else {
+            AMShowToast(@"💾 Đã lưu hàng đợi! Hãy mở một Text Layer để chèn.");
+        }
+    }];
+}
+
+- (void)applyLyricsToQueue {
+    [self.view endEditing:YES];
+    NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
+    if (lines.count == 0) {
+        AMShowToast(@"⚠️ Vui lòng nhập lời trước khi lưu!");
+        return;
+    }
+
+    [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
+    if (self.onLyricsLoaded) {
+        self.onLyricsLoaded();
+    }
+
+    [self dismissViewControllerAnimated:YES completion:^{
+        AMShowToast([NSString stringWithFormat:@"✨ Đã nạp %lu câu vào hàng đợi!", (unsigned long)lines.count]);
+    }];
 }
 
 @end
 
-#pragma mark - Home Settings Dashboard Modal (Mở từ nút nổi ở Trang Chủ)
+#pragma mark - Home Settings Dashboard Modal (Modern Liquid Glass)
 
 @interface AMHomeSettingsViewController : UIViewController
 @property (nonatomic, strong) UILabel *lyricsStatusLabel;
@@ -433,7 +679,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.11 alpha:0.98];
+    self.view.backgroundColor = [UIColor colorWithRed:0.05 green:0.06 blue:0.09 alpha:0.98];
 
     CGFloat w = self.view.bounds.size.width;
 
@@ -445,53 +691,57 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self.view addSubview:titleLabel];
 
     // Card 1: Batch Lyrics Manager (Nạp & Xóa Hàng Đợi)
-    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 95)];
-    card1.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
-    card1.layer.cornerRadius = 14.0;
+    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 100)];
+    card1.backgroundColor = [UIColor colorWithRed:0.10 green:0.12 blue:0.16 alpha:0.95];
+    card1.layer.cornerRadius = 16.0;
+    card1.layer.borderWidth = 1.0;
+    card1.layer.borderColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.4].CGColor;
     card1.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card1];
 
     UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 32, 22)];
-    l1.text = @"📝 Quản Lý Hàng Đợi Lời (Lyrics Queue)";
+    l1.text = @"📝 Studio Auto Lyrics & Text Queue";
     l1.textColor = [UIColor whiteColor];
     l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card1 addSubview:l1];
 
-    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card1.bounds.size.width - 190, 48)];
-    self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:12];
+    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card1.bounds.size.width - 190, 52)];
+    self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     self.lyricsStatusLabel.numberOfLines = 2;
     [card1 addSubview:self.lyricsStatusLabel];
     [self refreshLyricsStatus];
 
     // Nạp Mới Button
     UIButton *loadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 42, 85, 36);
-    [loadBtn setTitle:@"📝 Nạp Mới" forState:UIControlStateNormal];
+    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 44, 88, 38);
+    [loadBtn setTitle:@"📝 Mở Studio" forState:UIControlStateNormal];
     [loadBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    loadBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    loadBtn.layer.cornerRadius = 10.0;
-    loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    loadBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    loadBtn.layer.cornerRadius = 12.0;
+    loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightHeavy];
     loadBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [loadBtn addTarget:self action:@selector(openLyricsModal) forControlEvents:UIControlEventTouchUpInside];
     [card1 addSubview:loadBtn];
 
     // Xóa Hàng Đợi Button
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(card1.bounds.size.width - 88, 42, 76, 36);
+    clearBtn.frame = CGRectMake(card1.bounds.size.width - 84, 44, 72, 38);
     [clearBtn setTitle:@"🗑️ Xóa" forState:UIControlStateNormal];
     [clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
-    clearBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.1 alpha:0.8];
-    clearBtn.layer.cornerRadius = 10.0;
+    clearBtn.backgroundColor = [UIColor colorWithRed:0.35 green:0.12 blue:0.12 alpha:0.8];
+    clearBtn.layer.cornerRadius = 12.0;
     clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     clearBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [clearBtn addTarget:self action:@selector(clearQueueAction) forControlEvents:UIControlEventTouchUpInside];
     [card1 addSubview:clearBtn];
 
     // Card 2: Auto Save to Camera Roll
-    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 168, w - 32, 70)];
-    card2.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
-    card2.layer.cornerRadius = 14.0;
+    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 172, w - 32, 72)];
+    card2.backgroundColor = [UIColor colorWithRed:0.10 green:0.12 blue:0.16 alpha:0.95];
+    card2.layer.cornerRadius = 16.0;
+    card2.layer.borderWidth = 1.0;
+    card2.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.5].CGColor;
     card2.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card2];
 
@@ -501,23 +751,25 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card2 addSubview:l2];
 
-    UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card2.bounds.size.width - 100, 20)];
+    UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, card2.bounds.size.width - 100, 20)];
     l2Sub.text = @"Tự động lưu video sau khi render xong";
     l2Sub.textColor = [UIColor lightGrayColor];
     l2Sub.font = [UIFont systemFontOfSize:11];
     [card2 addSubview:l2Sub];
 
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 19, 51, 31)];
-    sw.onTintColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 20, 51, 31)];
+    sw.onTintColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
     sw.on = AMIsAutoSaveEnabled();
     sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [sw addTarget:self action:@selector(toggleAutoSave:) forControlEvents:UIControlEventValueChanged];
     [card2 addSubview:sw];
 
     // Card 3: Pro & Effects Status
-    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 250, w - 32, 80)];
-    card3.backgroundColor = [UIColor colorWithWhite:0.14 alpha:1.0];
-    card3.layer.cornerRadius = 14.0;
+    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 256, w - 32, 86)];
+    card3.backgroundColor = [UIColor colorWithRed:0.10 green:0.12 blue:0.16 alpha:0.95];
+    card3.layer.cornerRadius = 16.0;
+    card3.layer.borderWidth = 1.0;
+    card3.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.5].CGColor;
     card3.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card3];
 
@@ -527,21 +779,21 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card3 addSubview:l3];
 
-    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 36)];
-    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Rung Chuông 10s quảng cáo";
-    l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    l3Sub.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card3.bounds.size.width - 32, 42)];
+    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, Không Logo)\n🟢 1.182 Hiệu ứng & Presets từ bản V2 sẵn sàng\n🟢 Đã triệt tiêu 100% Popup & Quảng cáo Blatant";
+    l3Sub.textColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    l3Sub.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightMedium];
     l3Sub.numberOfLines = 3;
     [card3 addSubview:l3Sub];
 
     // Close Button
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(16, self.view.bounds.size.height - 56, w - 32, 44);
+    closeBtn.frame = CGRectMake(16, self.view.bounds.size.height - 58, w - 32, 46);
     [closeBtn setTitle:@"Đóng Cài Đặt" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor colorWithWhite:0.25 alpha:1.0];
-    closeBtn.layer.cornerRadius = 12.0;
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    closeBtn.backgroundColor = [UIColor colorWithWhite:0.22 alpha:0.9];
+    closeBtn.layer.cornerRadius = 14.0;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     closeBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:closeBtn];
@@ -554,17 +806,19 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         self.lyricsStatusLabel.textColor = [UIColor lightGrayColor];
     } else {
         self.lyricsStatusLabel.text = [NSString stringWithFormat:@"Đang có %lu câu trong hàng đợi.\n(Hiện tại: #%lu/%lu)", (unsigned long)mgr.lyricsLines.count, (unsigned long)(mgr.currentIndex + 1), (unsigned long)mgr.lyricsLines.count];
-        self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
+        self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
     }
 }
 
 - (void)clearQueueAction {
     [[AMLyricsQueueManager sharedManager] clearLyrics];
     [self refreshLyricsStatus];
+    AMShowToast(@"🗑️ Đã xóa sạch hàng đợi!");
 }
 
 - (void)toggleAutoSave:(UISwitch *)sw {
     AMSetAutoSaveEnabled(sw.on);
+    AMShowToast(sw.on ? @"✅ Đã bật Tự Động Lưu Video" : @"⏸️ Đã tắt Tự Động Lưu Video");
 }
 
 - (void)openLyricsModal {
@@ -583,14 +837,16 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Rock-Solid Pixel-Perfect Layout)
+#pragma mark - Next-Gen iOS 18 Liquid Glass Lyrics Bar (With 1-Tap Batch Text Inserter)
 
 @interface AMMinimalLyricsBar : UIView
 @property (nonatomic, weak) UIViewController *targetVC;
+@property (nonatomic, strong) UIVisualEffectView *blurView;
 @property (nonatomic, strong) UIView *capsule;
 @property (nonatomic, strong) UIButton *prevBtn;
 @property (nonatomic, strong) UIButton *nextBtn;
 @property (nonatomic, strong) UIButton *versePillBtn;
+@property (nonatomic, strong) UIButton *batchAllBtn;
 @property (nonatomic, strong) UIButton *menuBtn;
 @property (nonatomic, strong) UIButton *closeBtn;
 + (instancetype)barForViewController:(UIViewController *)vc;
@@ -601,75 +857,107 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 + (instancetype)barForViewController:(UIViewController *)vc {
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 44.0)];
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
 
-    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
-    capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.12 alpha:0.94];
-    capsule.layer.cornerRadius = 18.0;
-    capsule.layer.borderWidth = 1.0;
-    capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.35].CGColor;
+    // Capsule container with Liquid Glass Blur & Neon Border
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 38.0)];
+    capsule.layer.cornerRadius = 19.0;
+    capsule.layer.borderWidth = 1.2;
+    capsule.layer.borderColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.55].CGColor;
+    capsule.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.4].CGColor;
+    capsule.layer.shadowRadius = 8.0;
+    capsule.layer.shadowOpacity = 0.6;
+    capsule.layer.shadowOffset = CGSizeMake(0, 2);
     capsule.clipsToBounds = YES;
     [bar addSubview:capsule];
     bar.capsule = capsule;
 
+    // Blur Effect
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+    blurView.frame = capsule.bounds;
+    blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [capsule addSubview:blurView];
+    bar.blurView = blurView;
+
+    // Subtle Tint View inside blur
+    UIView *tintView = [[UIView alloc] initWithFrame:blurView.contentView.bounds];
+    tintView.backgroundColor = [UIColor colorWithRed:0.06 green:0.08 blue:0.12 alpha:0.75];
+    tintView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [blurView.contentView addSubview:tintView];
+
     // 1. Prev Button [‹]
     UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
     [prev setTitle:@"‹" forState:UIControlStateNormal];
-    [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    [prev setTitleColor:[UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0] forState:UIControlStateNormal];
     prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    prev.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    prev.layer.cornerRadius = 14.0;
+    prev.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.65];
+    prev.layer.cornerRadius = 15.0;
     [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
-    [capsule addSubview:prev];
+    [blurView.contentView addSubview:prev];
     bar.prevBtn = prev;
 
     // 2. Next Button [›]
     UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
     [next setTitle:@"›" forState:UIControlStateNormal];
-    [next setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+    [next setTitleColor:[UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0] forState:UIControlStateNormal];
     next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    next.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    next.layer.cornerRadius = 14.0;
+    next.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.65];
+    next.layer.cornerRadius = 15.0;
     [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
-    [capsule addSubview:next];
+    [blurView.contentView addSubview:next];
     bar.nextBtn = next;
 
-    // 3. Close Button [✕]
-    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    [close setTitle:@"✕" forState:UIControlStateNormal];
-    [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
-    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-    close.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    close.layer.cornerRadius = 14.0;
-    [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-    [capsule addSubview:close];
-    bar.closeBtn = close;
-
-    // 4. Menu Button [📋] (Nạp Lời / Chọn Câu / Xóa)
-    UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
-    [menu setTitle:@"📋" forState:UIControlStateNormal];
-    menu.titleLabel.font = [UIFont systemFontOfSize:14];
-    menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
-    menu.layer.cornerRadius = 14.0;
-    [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
-    [capsule addSubview:menu];
-    bar.menuBtn = menu;
-
-    // 5. Verse Pill Button [⚡ #1/N: "Lời câu..."]
+    // 3. Central Verse Pill Button [⚡ #1/N: "Lời câu..."]
     UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
-    verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.18];
-    verse.layer.cornerRadius = 14.0;
-    verse.layer.borderWidth = 0.8;
-    verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:0.5].CGColor;
+    verse.backgroundColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.20];
+    verse.layer.cornerRadius = 15.0;
+    verse.layer.borderWidth = 1.0;
+    verse.layer.borderColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.6].CGColor;
     [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     verse.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     verse.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     verse.contentEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 8);
     [verse addTarget:bar action:@selector(verseTapped) forControlEvents:UIControlEventTouchUpInside];
-    [capsule addSubview:verse];
+    [blurView.contentView addSubview:verse];
     bar.versePillBtn = verse;
+
+    // 4. Batch All Inserter Button [🚀 Hết] (1-CHẠM NHẬP TOÀN BỘ TEXT)
+    UIButton *batchAll = [UIButton buttonWithType:UIButtonTypeSystem];
+    [batchAll setTitle:@"🚀 Hết" forState:UIControlStateNormal];
+    [batchAll setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    batchAll.titleLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightHeavy];
+    batchAll.backgroundColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0];
+    batchAll.layer.cornerRadius = 15.0;
+    batchAll.layer.shadowColor = [UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:0.5].CGColor;
+    batchAll.layer.shadowRadius = 4.0;
+    batchAll.layer.shadowOpacity = 0.6;
+    [batchAll addTarget:bar action:@selector(batchAllTapped) forControlEvents:UIControlEventTouchUpInside];
+    [blurView.contentView addSubview:batchAll];
+    bar.batchAllBtn = batchAll;
+
+    // 5. Menu Button [📋] (Studio & Quản Lý)
+    UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
+    [menu setTitle:@"📋" forState:UIControlStateNormal];
+    menu.titleLabel.font = [UIFont systemFontOfSize:14];
+    menu.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.65];
+    menu.layer.cornerRadius = 15.0;
+    [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [blurView.contentView addSubview:menu];
+    bar.menuBtn = menu;
+
+    // 6. Close Button [✕]
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close setTitleColor:[UIColor colorWithWhite:0.75 alpha:1.0] forState:UIControlStateNormal];
+    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    close.backgroundColor = [UIColor colorWithWhite:0.20 alpha:0.65];
+    close.layer.cornerRadius = 15.0;
+    [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [blurView.contentView addSubview:close];
+    bar.closeBtn = close;
 
     [bar setNeedsLayout];
     [bar refreshDisplay];
@@ -677,11 +965,11 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (CGSize)intrinsicContentSize {
-    return CGSizeMake(UIViewNoIntrinsicMetric, 42.0);
+    return CGSizeMake(UIViewNoIntrinsicMetric, 44.0);
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
-    return CGSizeMake(size.width, 42.0);
+    return CGSizeMake(size.width, 44.0);
 }
 
 - (void)layoutSubviews {
@@ -690,50 +978,63 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     CGFloat w = self.bounds.size.width;
     CGFloat padLeft = MAX(8.0, insets.left);
     CGFloat padRight = MAX(8.0, insets.right);
-    
+
     CGFloat capW = w - padLeft - padRight;
     if (capW < 100.0) capW = [UIScreen mainScreen].bounds.size.width - 16.0;
-    
-    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 36.0);
 
-    CGFloat btnH = 28.0;
+    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 38.0);
+    self.blurView.frame = self.capsule.bounds;
+
+    CGFloat btnH = 30.0;
     CGFloat btnY = 4.0;
 
-    self.prevBtn.frame = CGRectMake(4.0, btnY, 28.0, btnH);
-    self.nextBtn.frame = CGRectMake(36.0, btnY, 28.0, btnH);
+    // Left controls: Prev (30), Next (30)
+    self.prevBtn.frame = CGRectMake(4.0, btnY, 30.0, btnH);
+    self.nextBtn.frame = CGRectMake(38.0, btnY, 30.0, btnH);
 
-    self.closeBtn.frame = CGRectMake(capW - 32.0, btnY, 28.0, btnH);
-    self.menuBtn.frame = CGRectMake(capW - 64.0, btnY, 28.0, btnH);
+    // Right controls: Close (30), Menu (30), BatchAll (54)
+    CGFloat rightX = capW - 34.0;
+    self.closeBtn.frame = CGRectMake(rightX, btnY, 30.0, btnH);
+    rightX -= 34.0;
+    self.menuBtn.frame = CGRectMake(rightX, btnY, 30.0, btnH);
+    rightX -= 58.0;
+    self.batchAllBtn.frame = CGRectMake(rightX, btnY, 54.0, btnH);
 
-    CGFloat centerStartX = 68.0;
-    CGFloat centerW = capW - 68.0 - 68.0;
+    // Center pill occupies remaining width
+    CGFloat centerStartX = 72.0;
+    CGFloat centerW = rightX - centerStartX - 4.0;
     if (centerW < 60.0) centerW = 60.0;
     self.versePillBtn.frame = CGRectMake(centerStartX, btnY, centerW, btnH);
 }
 
 - (void)refreshDisplay {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    
-    // Always keep all buttons visible!
+
     self.prevBtn.hidden = NO;
     self.nextBtn.hidden = NO;
+    self.versePillBtn.hidden = NO;
+    self.batchAllBtn.hidden = NO;
     self.menuBtn.hidden = NO;
     self.closeBtn.hidden = NO;
-    self.versePillBtn.hidden = NO;
 
     if (mgr.lyricsLines.count == 0) {
         self.prevBtn.enabled = NO;
         self.prevBtn.alpha = 0.35;
         self.nextBtn.enabled = NO;
         self.nextBtn.alpha = 0.35;
+        self.batchAllBtn.enabled = NO;
+        self.batchAllBtn.alpha = 0.35;
         [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
-        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.95 blue:0.55 alpha:1.0] forState:UIControlStateNormal];
     } else {
         self.prevBtn.enabled = (mgr.currentIndex > 0);
         self.prevBtn.alpha = (mgr.currentIndex > 0) ? 1.0 : 0.4;
 
         self.nextBtn.enabled = (mgr.currentIndex + 1 < mgr.lyricsLines.count);
         self.nextBtn.alpha = (mgr.currentIndex + 1 < mgr.lyricsLines.count) ? 1.0 : 0.4;
+
+        self.batchAllBtn.enabled = YES;
+        self.batchAllBtn.alpha = 1.0;
 
         NSUInteger cur = mgr.currentIndex + 1;
         NSString *line = [mgr currentLineText] ?: @"";
@@ -743,6 +1044,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     }
 }
 
+// 1-Tap Verse Pill: Chèn 1 câu và tự động chuyển sang câu tiếp theo
 - (void)verseTapped {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count == 0) {
@@ -753,37 +1055,25 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     NSString *line = [mgr currentLineText];
     if (!line) return;
 
-    UITextView *tv = nil;
-    if ([self.targetVC respondsToSelector:@selector(inputTextView)]) {
-        tv = [self.targetVC valueForKey:@"inputTextView"];
-    }
-    if (!tv) {
-        for (UIView *sub in self.targetVC.view.subviews) {
-            if ([sub isKindOfClass:[UITextView class]]) {
-                tv = (UITextView *)sub;
-                break;
-            }
-        }
-    }
-
-    if (tv) {
-        tv.text = line;
-        if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
-            [tv.delegate textViewDidChange:tv];
-        }
-        if ([tv.delegate respondsToSelector:@selector(textView:shouldChangeTextInRange:replacementText:)]) {
-            [tv.delegate textView:tv shouldChangeTextInRange:NSMakeRange(0, tv.text.length) replacementText:line];
-        }
-        [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
-
-        @try {
-            [self.targetVC setValue:line forKey:@"appearText"];
-        } @catch (NSException *e) {}
-
+    if (AMInjectTextToActiveInput(line, self.targetVC)) {
         [mgr consumeNextLineText];
         [self refreshDisplay];
+    }
+}
 
-        AudioServicesPlaySystemSound(1519);
+// 1-TAP BATCH ALL INSERTER: Chèn toàn bộ bài hát/toàn bộ các câu vào text layer đang chọn chỉ với 1-chạm!
+- (void)batchAllTapped {
+    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
+    if (mgr.lyricsLines.count == 0) {
+        [self loadTapped];
+        return;
+    }
+
+    NSString *allText = [mgr allLyricsFullText];
+    if (!allText) return;
+
+    if (AMInjectTextToActiveInput(allText, self.targetVC)) {
+        AMShowToast([NSString stringWithFormat:@"🚀 Đã 1-chạm nhập toàn bộ %lu câu!", (unsigned long)mgr.lyricsLines.count]);
     }
 }
 
@@ -810,19 +1100,24 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)menuTapped {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Quản Lý Lời Bài Hát"
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🎵 Quản Lý Auto Text & Lyrics"
                                                                    message:nil
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📝 Nạp Lời Mới / Chỉnh Sửa" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📝 Mở Studio Lời (Nạp / Sửa)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self loadTapped];
     }]];
 
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count > 0) {
+        [sheet addAction:[UIAlertAction actionWithTitle:@"🚀 1-Chạm Nhập Toàn Bộ Vào Text Này" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [self batchAllTapped];
+        }]];
+
         [sheet addAction:[UIAlertAction actionWithTitle:@"🔄 Bắt Đầu Lại Từ Câu #1" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
             [mgr resetToFirstVerse];
             [self refreshDisplay];
+            AMShowToast(@"🔄 Đã quay về câu #1");
         }]];
 
         [sheet addAction:[UIAlertAction actionWithTitle:@"🎯 Chọn Câu Cụ Thể Trong Danh Sách" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
@@ -832,6 +1127,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         [sheet addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Sạch Hàng Đợi" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
             [mgr clearLyrics];
             [self refreshDisplay];
+            AMShowToast(@"🗑️ Đã xóa sạch hàng đợi!");
         }]];
     }
 
@@ -861,6 +1157,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 - (void)loadTapped {
     AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
     modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    modal.parentTargetVC = self.targetVC;
     __weak typeof(self) weakSelf = self;
     modal.onLyricsLoaded = ^{
         [weakSelf refreshDisplay];
