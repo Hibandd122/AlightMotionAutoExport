@@ -102,8 +102,50 @@ static OSStatus hook_SecItemDelete(CFDictionaryRef query) {
 }
 
 #pragma mark - =========================================================
-#pragma mark 2. Native Pro & Watermark Annihilator (Standard 60 FPS)
+#pragma mark 2. Native Pro & Watermark Annihilator (Clean & Blatant-Free)
 #pragma mark - =========================================================
+
+static id (*orig_NSUserDefaults_objectForKey)(id, SEL, NSString *);
+static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"forced_subscription_tier_key"]) return @"cloudSubscriber";
+        if ([defaultName isEqualToString:@"activeSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"activeLifetimesOverride"] ||
+            [defaultName isEqualToString:@"activeBundleSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"activeExternalSubscriptionsOverride"]) {
+            return @[@"alightcreative.motion.1y_t80"];
+        }
+        if ([defaultName isEqualToString:@"Forced Subscription status"]) return @"active";
+        if ([defaultName isEqualToString:@"UnlockAllProFeatures"] ||
+            [defaultName isEqualToString:@"isSubscribedToUltra"] ||
+            [defaultName isEqualToString:@"isPremium"] ||
+            [defaultName isEqualToString:@"hasMembership"] ||
+            [defaultName isEqualToString:@"benefit_remove_watermark"] ||
+            [defaultName isEqualToString:@"remove_watermark"] ||
+            [defaultName isEqualToString:@"has_active_subscriptions"]) {
+            return @YES;
+        }
+        if ([defaultName isEqualToString:@"isFreeUser"]) return @NO;
+    }
+    return orig_NSUserDefaults_objectForKey ? orig_NSUserDefaults_objectForKey(self, _cmd, defaultName) : nil;
+}
+
+static BOOL (*orig_NSUserDefaults_boolForKey)(id, SEL, NSString *);
+static BOOL hook_NSUserDefaults_boolForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"UnlockAllProFeatures"] ||
+            [defaultName isEqualToString:@"isSubscribedToUltra"] ||
+            [defaultName isEqualToString:@"isPremium"] ||
+            [defaultName isEqualToString:@"hasMembership"] ||
+            [defaultName isEqualToString:@"benefit_remove_watermark"] ||
+            [defaultName isEqualToString:@"remove_watermark"] ||
+            [defaultName isEqualToString:@"has_active_subscriptions"]) {
+            return YES;
+        }
+        if ([defaultName isEqualToString:@"isFreeUser"]) return NO;
+    }
+    return orig_NSUserDefaults_boolForKey ? orig_NSUserDefaults_boolForKey(self, _cmd, defaultName) : NO;
+}
 
 static void AMApplyProSettings(void) {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -112,6 +154,11 @@ static void AMApplyProSettings(void) {
     [ud setObject:@YES forKey:@"isPremium"];
     [ud setObject:@YES forKey:@"hasMembership"];
     [ud setObject:@NO forKey:@"isFreeUser"];
+    [ud setObject:@YES forKey:@"benefit_remove_watermark"];
+    [ud setObject:@YES forKey:@"remove_watermark"];
+    [ud setObject:@YES forKey:@"has_active_subscriptions"];
+    [ud setObject:@"cloudSubscriber" forKey:@"forced_subscription_tier_key"];
+    [ud setObject:@"active" forKey:@"Forced Subscription status"];
     [ud setObject:@"alightcreative.motion.1y_t80" forKey:@"AM_ActiveProductID"];
     
     // Alight Motion internal Monetization storage
@@ -128,6 +175,7 @@ static void AMApplyProSettings(void) {
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeSubscriptionsOverride"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeLifetimesOverride"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeBundleSubscriptionsOverride"];
+    [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeExternalSubscriptionsOverride"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_analytics_storage"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_ad_storage"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_ad_user_data"];
@@ -136,6 +184,21 @@ static void AMApplyProSettings(void) {
     [ud setBool:NO forKey:@"firebase_analytics_collection_deactivated"];
     [ud setBool:NO forKey:@"FIREBASE_ANALYTICS_COLLECTION_ENABLED"];
     [ud synchronize];
+
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class udClass = [NSUserDefaults class];
+        Method mObj = class_getInstanceMethod(udClass, @selector(objectForKey:));
+        if (mObj) {
+            orig_NSUserDefaults_objectForKey = (void *)method_getImplementation(mObj);
+            method_setImplementation(mObj, (IMP)hook_NSUserDefaults_objectForKey);
+        }
+        Method mBool = class_getInstanceMethod(udClass, @selector(boolForKey:));
+        if (mBool) {
+            orig_NSUserDefaults_boolForKey = (void *)method_getImplementation(mBool);
+            method_setImplementation(mBool, (IMP)hook_NSUserDefaults_boolForKey);
+        }
+    });
 }
 
 #pragma mark - =========================================================
