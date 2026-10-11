@@ -2479,8 +2479,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
         // AMApplyDefaultWhiteColorPatch disabled on v6.2.60 to prevent stripping execute permissions from __objc_stubs
         // AMApplyDefaultWhiteColorPatch();
 
-        // 7. Install Pure Dark Mode Engine (Based on Android APK Reference)
-        AMInitPureDarkThemeEngine();
+        // 7. Pure Dark Mode Engine removed per user request
 
         // Native bitrate engine preserved 100% untouched
         NSLog(@"[AlightMotionUltra] Successfully initialized Clean Tweak with Pure Dark Mode, Default Pure White Text, Native Bitrate Engine & FastStart Auto-Save!");
