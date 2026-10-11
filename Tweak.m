@@ -2476,8 +2476,8 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
             }
         }
 
-        // Apply native binary patch for default white text/vector color
-        AMApplyDefaultWhiteColorPatch();
+        // AMApplyDefaultWhiteColorPatch disabled on v6.2.60 to prevent stripping execute permissions from __objc_stubs
+        // AMApplyDefaultWhiteColorPatch();
 
         // 7. Install Pure Dark Mode Engine (Based on Android APK Reference)
         AMInitPureDarkThemeEngine();
