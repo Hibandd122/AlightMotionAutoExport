@@ -2374,27 +2374,146 @@ static void hook_UIViewController_viewWillAppear(UIViewController *self, SEL _cm
     }
 }
 
-static void AMInitPureDarkThemeEngine(void) {
+#pragma mark - =========================================================
+#pragma mark 8. Ultimate Smoothness & 120 FPS Performance Engine
+#pragma mark - =========================================================
+
+typedef struct {
+    float minimum;
+    float maximum;
+    float preferred;
+} AMFrameRateRange;
+
+// 1. Force 120 FPS ProMotion on all CADisplayLink instances (Timeline, Scrubbing, Animation)
+static CADisplayLink *(*orig_CADisplayLink_displayLinkWithTarget_selector)(id, SEL, id, SEL);
+static CADisplayLink *hook_CADisplayLink_displayLinkWithTarget_selector(id self, SEL _cmd, id target, SEL sel) {
+    CADisplayLink *dl = orig_CADisplayLink_displayLinkWithTarget_selector ? orig_CADisplayLink_displayLinkWithTarget_selector(self, _cmd, target, sel) : nil;
+    if (dl) {
+        if ([dl respondsToSelector:@selector(setPreferredFramesPerSecond:)]) {
+            dl.preferredFramesPerSecond = 120;
+        }
+        if ([dl respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
+            AMFrameRateRange range = { 60.0f, 120.0f, 120.0f };
+            typedef void (*SetRangeFunc)(id, SEL, AMFrameRateRange);
+            ((SetRangeFunc)objc_msgSend)(dl, @selector(setPreferredFrameRateRange:), range);
+        }
+    }
+    return dl;
+}
+
+static void (*orig_CADisplayLink_addToRunLoop_forMode)(id, SEL, NSRunLoop *, NSRunLoopMode);
+static void hook_CADisplayLink_addToRunLoop_forMode(id self, SEL _cmd, NSRunLoop *runloop, NSRunLoopMode mode) {
+    if ([self respondsToSelector:@selector(setPreferredFramesPerSecond:)]) {
+        ((CADisplayLink *)self).preferredFramesPerSecond = 120;
+    }
+    if ([self respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
+        AMFrameRateRange range = { 60.0f, 120.0f, 120.0f };
+        typedef void (*SetRangeFunc)(id, SEL, AMFrameRateRange);
+        ((SetRangeFunc)objc_msgSend)(self, @selector(setPreferredFrameRateRange:), range);
+    }
+    if (orig_CADisplayLink_addToRunLoop_forMode) {
+        orig_CADisplayLink_addToRunLoop_forMode(self, _cmd, runloop, mode);
+    }
+}
+
+// 2. GPU Triple-Buffering for CAMetalLayer (Zero Stutter on Heavy Video & Effects)
+static id (*orig_CAMetalLayer_init)(id, SEL);
+static id hook_CAMetalLayer_init(id self, SEL _cmd) {
+    self = orig_CAMetalLayer_init ? orig_CAMetalLayer_init(self, _cmd) : self;
+    if (self) {
+        if ([self respondsToSelector:@selector(setMaximumDrawableCount:)]) {
+            ((void(*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setMaximumDrawableCount:), 3);
+        }
+        if ([self respondsToSelector:@selector(setPresentsWithTransaction:)]) {
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setPresentsWithTransaction:), NO);
+        }
+        if ([self respondsToSelector:@selector(setDisplaySyncEnabled:)]) {
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setDisplaySyncEnabled:), YES);
+        }
+    }
+    return self;
+}
+
+// 3. Thermal Throttling & Low Power Mode Bypass (Prevents FPS drop when iPhone gets warm)
+static NSProcessInfoThermalState hook_NSProcessInfo_thermalState(id self, SEL _cmd) {
+    return NSProcessInfoThermalStateNominal; // Always 0 (Cool)
+}
+
+static BOOL hook_NSProcessInfo_isLowPowerModeEnabled(id self, SEL _cmd) {
+    return NO; // Never throttle CPU/GPU
+}
+
+// 4. Instant Zero-Stall Video Playback (Timeline Preview Starts Immediately)
+static void (*orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling)(id, SEL, BOOL);
+static void hook_AVPlayer_setAutomaticallyWaitsToMinimizeStalling(id self, SEL _cmd, BOOL waits) {
+    if (orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling) {
+        orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling(self, _cmd, NO);
+    }
+}
+
+// 5. Expand Texture Cache & Thumbnail Cache Limits (Prevents reload stutters)
+static void AMOptimizeCacheAndMemory(void) {
+    NSURLCache *sharedCache = [NSURLCache sharedURLCache];
+    if (sharedCache) {
+        [sharedCache setMemoryCapacity:128 * 1024 * 1024]; // 128 MB RAM Cache
+        [sharedCache setDiskCapacity:512 * 1024 * 1024];   // 512 MB Disk Cache
+    }
+}
+
+static void AMInitSmoothnessAndPerformanceEngine(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        Method mAppear = class_getInstanceMethod([UIViewController class], @selector(viewWillAppear:));
-        if (mAppear) {
-            orig_UIViewController_viewWillAppear = (void *)method_getImplementation(mAppear);
-            method_setImplementation(mAppear, (IMP)hook_UIViewController_viewWillAppear);
-        }
-        
-        // Ensure all WKWebView instances have black background & dark opacity by default
-        Class wkClass = objc_getClass("WKWebView");
-        if (wkClass) {
-            Method mInit = class_getInstanceMethod(wkClass, @selector(initWithFrame:configuration:));
-            if (mInit) {
-                // Set default background color on WKWebView instances dynamically
-                Method mLoad = class_getInstanceMethod(wkClass, @selector(loadRequest:));
-                // Swizzle or configure as needed
+        // 1. Hook CADisplayLink for 120 FPS
+        Class dlClass = [CADisplayLink class];
+        if (dlClass) {
+            Method mCreate = class_getClassMethod(dlClass, @selector(displayLinkWithTarget:selector:));
+            if (mCreate) {
+                orig_CADisplayLink_displayLinkWithTarget_selector = (void *)method_getImplementation(mCreate);
+                method_setImplementation(mCreate, (IMP)hook_CADisplayLink_displayLinkWithTarget_selector);
+            }
+            Method mAdd = class_getInstanceMethod(dlClass, @selector(addToRunLoop:forMode:));
+            if (mAdd) {
+                orig_CADisplayLink_addToRunLoop_forMode = (void *)method_getImplementation(mAdd);
+                method_setImplementation(mAdd, (IMP)hook_CADisplayLink_addToRunLoop_forMode);
             }
         }
-        
-        NSLog(@"[AlightMotionUltra] Pure Dark Mode Engine (APK Reference) successfully installed!");
+
+        // 2. Hook CAMetalLayer for Triple Buffering
+        Class metalLayerClass = objc_getClass("CAMetalLayer");
+        if (metalLayerClass) {
+            Method mInit = class_getInstanceMethod(metalLayerClass, @selector(init));
+            if (mInit) {
+                orig_CAMetalLayer_init = (void *)method_getImplementation(mInit);
+                method_setImplementation(mInit, (IMP)hook_CAMetalLayer_init);
+            }
+        }
+
+        // 3. Hook NSProcessInfo for Thermal & Low Power Throttling Bypass
+        Class procClass = [NSProcessInfo class];
+        if (procClass) {
+            Method mThermal = class_getInstanceMethod(procClass, @selector(thermalState));
+            if (mThermal) {
+                method_setImplementation(mThermal, (IMP)hook_NSProcessInfo_thermalState);
+            }
+            Method mLowPower = class_getInstanceMethod(procClass, @selector(isLowPowerModeEnabled));
+            if (mLowPower) {
+                method_setImplementation(mLowPower, (IMP)hook_NSProcessInfo_isLowPowerModeEnabled);
+            }
+        }
+
+        // 4. Hook AVPlayer for Zero-Stall Playback
+        Class avClass = [AVPlayer class];
+        if (avClass) {
+            Method mStall = class_getInstanceMethod(avClass, @selector(setAutomaticallyWaitsToMinimizeStalling:));
+            if (mStall) {
+                orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling = (void *)method_getImplementation(mStall);
+                method_setImplementation(mStall, (IMP)hook_AVPlayer_setAutomaticallyWaitsToMinimizeStalling);
+            }
+        }
+
+        // 5. Expand Cache
+        AMOptimizeCacheAndMemory();
+        NSLog(@"[AlightMotionUltra] Successfully initialized 120 FPS ProMotion & Metal Triple-Buffering Engine!");
     });
 }
 
@@ -2402,6 +2521,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
     // 0. Instant Cold Boot: Neutralize heavy ad & telemetry SDKs synchronously before UIApplication starts
     AMNeutralizeAdNetworks();
     AMApplyProSettings();
+    AMInitSmoothnessAndPerformanceEngine();
 
     AMUnlockProjectPackageLimit();
 
@@ -2418,6 +2538,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
         // 2. Apply Pro Monetization state immediately and on launch notification
         AMApplyProSettings();
         AMNeutralizeAdNetworks();
+        AMInitSmoothnessAndPerformanceEngine();
         AMUnlockProjectPackageLimit();
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                           object:nil
@@ -2425,6 +2546,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
                                                       usingBlock:^(NSNotification * _Nonnull note) {
             AMApplyProSettings();
             AMNeutralizeAdNetworks();
+            AMInitSmoothnessAndPerformanceEngine();
             AMUnlockProjectPackageLimit();
         }];
 
@@ -2482,7 +2604,8 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
         // 7. Pure Dark Mode Engine removed per user request
 
         // Native bitrate engine preserved 100% untouched
-        NSLog(@"[AlightMotionUltra] Successfully initialized Clean Tweak with Pure Dark Mode, Default Pure White Text, Native Bitrate Engine & FastStart Auto-Save!");
+        NSLog(@"[AlightMotionUltra] Successfully initialized Clean Tweak with 120 FPS ProMotion, Triple Buffering & FastStart Auto-Save!");
     });
 }
+
 
