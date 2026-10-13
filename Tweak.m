@@ -1902,116 +1902,137 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 @end
 
 
-#pragma mark - Universal Haptic Silencer (Triệt tiêu toàn bộ rung phản hồi)
+#pragma mark - Universal Haptic Silencer (Triệt tiêu 100% mọi nguồn phát rung)
 
-static void hook_UIImpactFeedbackGenerator_impactOccurred(id self, SEL _cmd) {
-    // Silent: Không rung máy khi chạm hoặc thao tác bất kỳ nút nào
+static void noop_haptic_void(id self, SEL _cmd) {
+    // 100% Im lặng - không rung
 }
 
-static void hook_UIImpactFeedbackGenerator_impactOccurredWithIntensity(id self, SEL _cmd, CGFloat intensity) {
-    // Silent
+static BOOL noop_haptic_false(id self, SEL _cmd) {
+    return NO;
 }
 
-static void hook_UISelectionFeedbackGenerator_selectionChanged(id self, SEL _cmd) {
-    // Silent: Không rung khi cuộn timeline hoặc chọn layer
+static long long hook_UIDevice_feedbackSupportLevel(id self, SEL _cmd) {
+    // 0 = Hardware có 0 haptic engine (tương đương iPad/iPod), UIKit tự động tắt vĩnh viễn toàn bộ haptics
+    return 0;
 }
 
-static void hook_UINotificationFeedbackGenerator_notificationOccurred(id self, SEL _cmd, NSInteger type) {
-    // Silent: Không rung thông báo
-}
-
-static void hook_UIFeedbackGenerator_prepare(id self, SEL _cmd) {
-    // Silent
-}
-
-static void hook_UIFeedbackGenerator_activateWithCompletionBlock(id self, SEL _cmd, id block) {
-    if (block) {
-        void (^cb)(BOOL) = block;
-        cb(NO);
-    }
-}
-
-static BOOL hook_CHHapticEngine_startAndReturnError(id self, SEL _cmd, NSError **error) {
-    // Silent: CoreHaptics engine return success without starting vibration hardware
-    return YES;
-}
-
-static void hook_CHHapticEngine_startWithCompletionHandler(id self, SEL _cmd, id handler) {
-    if (handler) {
-        void (^cb)(NSError *) = handler;
-        cb(nil);
-    }
-}
-
-// Fishhook hooks for AudioServices
+// Fishhook hooks for AudioServices (Chặn đứng mọi system sound clicks & motor vibrations)
 static void (*orig_AudioServicesPlaySystemSound)(SystemSoundID);
 static void hook_AudioServicesPlaySystemSound(SystemSoundID soundID) {
-    // Suppress all haptic and vibration system sound IDs (1519: peek, 1520: pop, 1521: nope, 4095: vibrate, etc.)
-    if (soundID == 4095 || soundID == kSystemSoundID_Vibrate || (soundID >= 1510 && soundID <= 1530)) {
-        return;
-    }
-    if (orig_AudioServicesPlaySystemSound) {
-        orig_AudioServicesPlaySystemSound(soundID);
-    }
+    // Block 100% mọi system sound & haptic
+    return;
 }
 
 static void (*orig_AudioServicesPlaySystemSoundWithCompletion)(SystemSoundID, void (^)(void));
 static void hook_AudioServicesPlaySystemSoundWithCompletion(SystemSoundID soundID, void (^block)(void)) {
-    if (soundID == 4095 || soundID == kSystemSoundID_Vibrate || (soundID >= 1510 && soundID <= 1530)) {
-        if (block) block();
-        return;
-    }
-    if (orig_AudioServicesPlaySystemSoundWithCompletion) {
-        orig_AudioServicesPlaySystemSoundWithCompletion(soundID, block);
-    } else if (block) {
-        block();
+    if (block) block();
+    return;
+}
+
+static void (*orig_AudioServicesPlayAlertSound)(SystemSoundID);
+static void hook_AudioServicesPlayAlertSound(SystemSoundID soundID) {
+    return;
+}
+
+static void (*orig_AudioServicesPlayAlertSoundWithCompletion)(SystemSoundID, void (^)(void));
+static void hook_AudioServicesPlayAlertSoundWithCompletion(SystemSoundID soundID, void (^block)(void)) {
+    if (block) block();
+    return;
+}
+
+static void neutralizeAllClassMethods(const char *className) {
+    Class cls = objc_getClass(className);
+    if (!cls) return;
+
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    if (methods) {
+        for (unsigned int i = 0; i < count; i++) {
+            SEL sel = method_getName(methods[i]);
+            const char *selName = sel_getName(sel);
+            if (strcmp(selName, "init") == 0 || strcmp(selName, "dealloc") == 0 ||
+                strncmp(selName, "initWith", 8) == 0 || strcmp(selName, ".cxx_destruct") == 0) {
+                continue;
+            }
+            method_setImplementation(methods[i], (IMP)noop_haptic_void);
+        }
+        free(methods);
     }
 }
 
 static void AMNeutralizeAllHaptics(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        Class fbClass = objc_getClass("UIFeedbackGenerator");
-        if (fbClass) {
-            Method mPrep = class_getInstanceMethod(fbClass, @selector(prepare));
-            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
-            Method mAct = class_getInstanceMethod(fbClass, @selector(activateWithCompletionBlock:));
-            if (mAct) method_setImplementation(mAct, (IMP)hook_UIFeedbackGenerator_activateWithCompletionBlock);
+        // 1. Tắt cấp độ phần cứng haptic trên UIDevice (Master Switch của UIKit)
+        Class devCls = [UIDevice class];
+        if (devCls) {
+            Method mF1 = class_getInstanceMethod(devCls, @selector(_feedbackSupportLevel));
+            if (mF1) method_setImplementation(mF1, (IMP)hook_UIDevice_feedbackSupportLevel);
+            else class_addMethod(devCls, @selector(_feedbackSupportLevel), (IMP)hook_UIDevice_feedbackSupportLevel, "q@:");
+
+            Method mF2 = class_getInstanceMethod(devCls, @selector(feedbackSupportLevel));
+            if (mF2) method_setImplementation(mF2, (IMP)hook_UIDevice_feedbackSupportLevel);
+            else class_addMethod(devCls, @selector(feedbackSupportLevel), (IMP)hook_UIDevice_feedbackSupportLevel, "q@:");
         }
 
-        Class impactClass = objc_getClass("UIImpactFeedbackGenerator");
-        if (impactClass) {
-            Method m = class_getInstanceMethod(impactClass, @selector(impactOccurred));
-            if (m) method_setImplementation(m, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
-            Method mWithIntensity = class_getInstanceMethod(impactClass, @selector(impactOccurredWithIntensity:));
-            if (mWithIntensity) method_setImplementation(mWithIntensity, (IMP)hook_UIImpactFeedbackGenerator_impactOccurredWithIntensity);
-            Method mPrep = class_getInstanceMethod(impactClass, @selector(prepare));
-            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
+        // 2. Tắt master switch trên UIFeedbackGenerator
+        Class fbCls = objc_getClass("UIFeedbackGenerator");
+        if (fbCls) {
+            Class metaFb = object_getClass((id)fbCls);
+            if (metaFb) {
+                Method mMeta = class_getInstanceMethod(metaFb, @selector(_feedbackSupportLevel));
+                if (mMeta) method_setImplementation(mMeta, (IMP)hook_UIDevice_feedbackSupportLevel);
+                else class_addMethod(metaFb, @selector(_feedbackSupportLevel), (IMP)hook_UIDevice_feedbackSupportLevel, "q@:");
+            }
         }
 
-        Class selectClass = objc_getClass("UISelectionFeedbackGenerator");
-        if (selectClass) {
-            Method m = class_getInstanceMethod(selectClass, @selector(selectionChanged));
-            if (m) method_setImplementation(m, (IMP)hook_UISelectionFeedbackGenerator_selectionChanged);
-            Method mPrep = class_getInstanceMethod(selectClass, @selector(prepare));
-            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
+        // 3. Triệt tiêu toàn bộ methods trong tất cả các lớp Feedback Generator của UIKit
+        const char *uiFeedbackClasses[] = {
+            "UIFeedbackGenerator",
+            "UIImpactFeedbackGenerator",
+            "UISelectionFeedbackGenerator",
+            "UINotificationFeedbackGenerator",
+            "_UIImpactFeedbackGenerator",
+            "_UISelectionFeedbackGenerator",
+            "_UINotificationFeedbackGenerator",
+            "_UIFeedbackEngine",
+            "_UIFeedbackPattern",
+            NULL
+        };
+        for (int i = 0; uiFeedbackClasses[i] != NULL; i++) {
+            neutralizeAllClassMethods(uiFeedbackClasses[i]);
         }
 
-        Class notifClass = objc_getClass("UINotificationFeedbackGenerator");
-        if (notifClass) {
-            Method m = class_getInstanceMethod(notifClass, @selector(notificationOccurred:));
-            if (m) method_setImplementation(m, (IMP)hook_UINotificationFeedbackGenerator_notificationOccurred);
-            Method mPrep = class_getInstanceMethod(notifClass, @selector(prepare));
-            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
-        }
-
+        // 4. Triệt tiêu CoreHaptics (CHHapticEngine & CHHapticPatternPlayer)
         Class chClass = objc_getClass("CHHapticEngine");
         if (chClass) {
-            Method mStart = class_getInstanceMethod(chClass, @selector(startAndReturnError:));
-            if (mStart) method_setImplementation(mStart, (IMP)hook_CHHapticEngine_startAndReturnError);
-            Method mStartH = class_getInstanceMethod(chClass, @selector(startWithCompletionHandler:));
-            if (mStartH) method_setImplementation(mStartH, (IMP)hook_CHHapticEngine_startWithCompletionHandler);
+            Class metaCh = object_getClass((id)chClass);
+            if (metaCh) {
+                Method m1 = class_getInstanceMethod(metaCh, @selector(capabilitiesForHardware));
+                if (m1) method_setImplementation(m1, (IMP)noop_haptic_false);
+                Method m2 = class_getInstanceMethod(metaCh, @selector(supportsHaptics));
+                if (m2) method_setImplementation(m2, (IMP)noop_haptic_false);
+            }
+            neutralizeAllClassMethods("CHHapticEngine");
         }
+        neutralizeAllClassMethods("CHHapticPatternPlayer");
+
+        // 5. Triệt tiêu toàn bộ lớp Haptic riêng của Alight Motion & SDKs
+        const char *amHapticClasses[] = {
+            "_TtC12AlightMotion6Haptic",
+            "_TtCC12AlightMotion6Haptic6Impact",
+            "_TtCC12AlightMotion6Haptic9Selection",
+            "_TtCC12AlightMotion6Haptic12Notification",
+            "_TtC18InjetMosaicHelpers21HapticFeedbackManager",
+            "_TtC12VungleAdsSDK21HapticFeedbackManager",
+            NULL
+        };
+        for (int i = 0; amHapticClasses[i] != NULL; i++) {
+            neutralizeAllClassMethods(amHapticClasses[i]);
+        }
+
+        NSLog(@"[AlightMotionUltra] Successfully neutralized 100%% of all haptic engines globally!");
     });
 }
 
@@ -2444,15 +2465,17 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
     AMUnlockProjectPackageLimit();
 
     // 1. Rebind Keychain, Photos & AudioServices functions using Fishhook
-    rebind_symbols((struct rebinding[7]){
+    rebind_symbols((struct rebinding[9]){
         {"SecItemAdd", (void *)hook_SecItemAdd, (void **)&orig_SecItemAdd},
         {"SecItemCopyMatching", (void *)hook_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching},
         {"SecItemUpdate", (void *)hook_SecItemUpdate, (void **)&orig_SecItemUpdate},
         {"SecItemDelete", (void *)hook_SecItemDelete, (void **)&orig_SecItemDelete},
         {"UISaveVideoAtPathToSavedPhotosAlbum", (void *)hook_UISaveVideoAtPathToSavedPhotosAlbum, (void **)&orig_UISaveVideoAtPathToSavedPhotosAlbum},
         {"AudioServicesPlaySystemSound", (void *)hook_AudioServicesPlaySystemSound, (void **)&orig_AudioServicesPlaySystemSound},
-        {"AudioServicesPlaySystemSoundWithCompletion", (void *)hook_AudioServicesPlaySystemSoundWithCompletion, (void **)&orig_AudioServicesPlaySystemSoundWithCompletion}
-    }, 7);
+        {"AudioServicesPlaySystemSoundWithCompletion", (void *)hook_AudioServicesPlaySystemSoundWithCompletion, (void **)&orig_AudioServicesPlaySystemSoundWithCompletion},
+        {"AudioServicesPlayAlertSound", (void *)hook_AudioServicesPlayAlertSound, (void **)&orig_AudioServicesPlayAlertSound},
+        {"AudioServicesPlayAlertSoundWithCompletion", (void *)hook_AudioServicesPlayAlertSoundWithCompletion, (void **)&orig_AudioServicesPlayAlertSoundWithCompletion}
+    }, 9);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         // 2. Apply Pro Monetization state immediately and on launch notification
