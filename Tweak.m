@@ -1612,203 +1612,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Home Settings Dashboard Modal (Mở từ nút nổi ở Trang Chủ)
 
-@interface AMHomeSettingsViewController : UIViewController
-@property (nonatomic, strong) UILabel *lyricsStatusLabel;
-@end
-
-@implementation AMHomeSettingsViewController
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    // Apple Native iOS 18 Dark Slate Background
-    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.10 alpha:1.0]; // #12141A Midnight Slate
-
-    CGFloat w = self.view.bounds.size.width;
-
-    // Header with App Title & Subtitle
-    UIView *headerView = [[UIView alloc] initWithFrame:CGRectMake(20, 20, w - 40, 50)];
-    headerView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:headerView];
-
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, headerView.bounds.size.width, 26)];
-    titleLabel.text = @"Alight Motion Pro";
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    [headerView addSubview:titleLabel];
-
-    UILabel *subTitle = [[UILabel alloc] initWithFrame:CGRectMake(0, 26, headerView.bounds.size.width, 18)];
-    subTitle.text = @"Bản Dựng Tối Ưu • iOS 18 Native Experience";
-    subTitle.textColor = [UIColor colorWithRed:0.58 green:0.62 blue:0.70 alpha:1.0]; // Slate muted
-    subTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-    [headerView addSubview:subTitle];
-
-    // Card 1: Batch Lyrics Manager (Apple Native Slate Card)
-    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 80, w - 32, 100)];
-    card1.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0]; // Apple Secondary Grouped Dark
-    card1.layer.cornerRadius = 16.0;
-    card1.layer.borderWidth = 1.0;
-    card1.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
-    card1.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:card1];
-
-    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card1.bounds.size.width - 32, 20)];
-    l1.text = @"Hàng Đợi Lời Bài Hát (Smart Lyrics)";
-    l1.textColor = [UIColor whiteColor];
-    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [card1 addSubview:l1];
-
-    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, card1.bounds.size.width - 195, 50)];
-    self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0]; // iOS Mint/Green
-    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightMedium];
-    self.lyricsStatusLabel.numberOfLines = 2;
-    [card1 addSubview:self.lyricsStatusLabel];
-    [self refreshLyricsStatus];
-
-    // Nạp Mới Button (Apple Slate Accent)
-    UIButton *loadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 46, 85, 34);
-    [loadBtn setTitle:@"Nạp Mới" forState:UIControlStateNormal];
-    [loadBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    loadBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]; // Apple System Blue
-    loadBtn.layer.cornerRadius = 10.0;
-    loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    loadBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [loadBtn addTarget:self action:@selector(openLyricsModal) forControlEvents:UIControlEventTouchUpInside];
-    [card1 addSubview:loadBtn];
-
-    // Xóa Hàng Đợi Button
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(card1.bounds.size.width - 86, 46, 72, 34);
-    [clearBtn setTitle:@"Xóa" forState:UIControlStateNormal];
-    [clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.40 blue:0.40 alpha:1.0] forState:UIControlStateNormal];
-    clearBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
-    clearBtn.layer.cornerRadius = 10.0;
-    clearBtn.layer.borderWidth = 1.0;
-    clearBtn.layer.borderColor = [UIColor colorWithRed:1.0 green:0.40 blue:0.40 alpha:0.2].CGColor;
-    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    clearBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [clearBtn addTarget:self action:@selector(clearQueueAction) forControlEvents:UIControlEventTouchUpInside];
-    [card1 addSubview:clearBtn];
-
-    // Card 2: Auto Save to Camera Roll
-    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 192, w - 32, 72)];
-    card2.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0];
-    card2.layer.cornerRadius = 16.0;
-    card2.layer.borderWidth = 1.0;
-    card2.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
-    card2.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:card2];
-
-    UILabel *l2 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card2.bounds.size.width - 100, 20)];
-    l2.text = @"Tự Động Lưu Ảnh Vào Photos";
-    l2.textColor = [UIColor whiteColor];
-    l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [card2 addSubview:l2];
-
-    UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card2.bounds.size.width - 100, 20)];
-    l2Sub.text = @"Tự động lưu khung hình PNG và ảnh chia sẻ vào Cuộn Camera";
-    l2Sub.textColor = [UIColor colorWithRed:0.58 green:0.62 blue:0.70 alpha:1.0];
-    l2Sub.font = [UIFont systemFontOfSize:11];
-    [card2 addSubview:l2Sub];
-
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 20, 51, 31)];
-    sw.onTintColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0]; // Apple Mint
-    sw.on = AMIsAutoSaveEnabled();
-    sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [sw addTarget:self action:@selector(toggleAutoSave:) forControlEvents:UIControlEventValueChanged];
-    [card2 addSubview:sw];
-
-    // Card 3: System Performance & Optimization Badges
-    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 276, w - 32, 115)];
-    card3.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0];
-    card3.layer.cornerRadius = 16.0;
-    card3.layer.borderWidth = 1.0;
-    card3.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
-    card3.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:card3];
-
-    UILabel *l3 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card3.bounds.size.width - 32, 20)];
-    l3.text = @"Động Cơ Hiệu Năng & Trạng Thái";
-    l3.textColor = [UIColor whiteColor];
-    l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [card3 addSubview:l3];
-
-    // 4 Badges layout inside Card 3
-    NSArray *badges = @[
-        @"✓ Mở Khóa Pro • No Watermark",
-        @"✓ ProMotion 120 FPS & Metal 3x",
-        @"✓ Anti-Throttling (Chống Tụt FPS)",
-        @"✓ Triệt Tiêu 100% Ad & Telemetry"
-    ];
-    CGFloat badgeW = (card3.bounds.size.width - 40) / 2.0;
-    for (int i = 0; i < 4; i++) {
-        CGFloat bx = 16 + (i % 2) * (badgeW + 8);
-        CGFloat by = 38 + (i / 2) * 34;
-        UIView *bView = [[UIView alloc] initWithFrame:CGRectMake(bx, by, badgeW, 28)];
-        bView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
-        bView.layer.cornerRadius = 8.0;
-        bView.layer.borderWidth = 1.0;
-        bView.layer.borderColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:0.25].CGColor;
-        
-        UILabel *bLbl = [[UILabel alloc] initWithFrame:bView.bounds];
-        bLbl.text = badges[i];
-        bLbl.textColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0];
-        bLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-        bLbl.textAlignment = NSTextAlignmentCenter;
-        [bView addSubview:bLbl];
-        [card3 addSubview:bView];
-    }
-
-    // Close Button (Apple Native Subtle Style)
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(16, self.view.bounds.size.height - 56, w - 32, 44);
-    [closeBtn setTitle:@"Đóng" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor colorWithRed:0.75 green:0.80 blue:0.90 alpha:1.0] forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.07];
-    closeBtn.layer.cornerRadius = 14.0;
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    closeBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
-    [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:closeBtn];
-}
-
-- (void)refreshLyricsStatus {
-    AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    if (mgr.lyricsLines.count == 0) {
-        self.lyricsStatusLabel.text = @"Trạng thái: Trống (chưa có câu nào).";
-        self.lyricsStatusLabel.textColor = [UIColor lightGrayColor];
-    } else {
-        self.lyricsStatusLabel.text = [NSString stringWithFormat:@"Đang có %lu câu trong hàng đợi.\n(Hiện tại: #%lu/%lu)", (unsigned long)mgr.lyricsLines.count, (unsigned long)(mgr.currentIndex + 1), (unsigned long)mgr.lyricsLines.count];
-        self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0];
-    }
-}
-
-- (void)clearQueueAction {
-    [[AMLyricsQueueManager sharedManager] clearLyrics];
-    [self refreshLyricsStatus];
-}
-
-- (void)toggleAutoSave:(UISwitch *)sw {
-    AMSetAutoSaveEnabled(sw.on);
-}
-
-- (void)openLyricsModal {
-    AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
-    modal.modalPresentationStyle = UIModalPresentationFormSheet;
-    __weak typeof(self) weakSelf = self;
-    modal.onLyricsLoaded = ^{
-        [weakSelf refreshLyricsStatus];
-    };
-    [self presentViewController:modal animated:YES completion:nil];
-}
-
-- (void)dismissSelf {
-    [self dismissViewControllerAnimated:YES completion:nil];
-}
-
-@end
 
 #pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Rock-Solid Pixel-Perfect Layout)
 
@@ -2011,8 +1815,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
         [mgr consumeNextLineText];
         [self refreshDisplay];
-
-        AudioServicesPlaySystemSound(1519);
     }
 }
 
@@ -2099,121 +1901,15 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Home Screen Floating Settings HUD (CHỈ HIỆN Ở TRANG CHỦ)
-
-@interface AMHomeSettingsHUD : NSObject
-@property (nonatomic, strong) UIButton *floatingButton;
-@property (nonatomic, weak) UIWindow *parentWindow;
-+ (instancetype)sharedHUD;
-- (void)installFloatingButtonOnWindow:(UIWindow *)window;
-- (void)setFloatingButtonVisible:(BOOL)visible;
-@end
-
-@implementation AMHomeSettingsHUD
-
-+ (instancetype)sharedHUD {
-    static AMHomeSettingsHUD *hud = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        hud = [[self alloc] init];
-    });
-    return hud;
-}
-
-- (void)installFloatingButtonOnWindow:(UIWindow *)window {
-    if (self.floatingButton || !window) return;
-    self.parentWindow = window;
-
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    btn.frame = CGRectMake(16.0, window.bounds.size.height - 140.0, 46.0, 46.0);
-    btn.layer.cornerRadius = 23.0;
-    // Apple iOS 18 Midnight Slate Glass Surface
-    btn.backgroundColor = [UIColor colorWithRed:0.13 green:0.14 blue:0.18 alpha:0.92];
-    btn.layer.borderWidth = 1.0;
-    btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
-    btn.layer.shadowColor = [UIColor blackColor].CGColor;
-    btn.layer.shadowOffset = CGSizeMake(0, 4);
-    btn.layer.shadowRadius = 10.0;
-    btn.layer.shadowOpacity = 0.35;
-
-    // SF Symbol with Slate Tint
-    UIImage *symbol = nil;
-    if (@available(iOS 13.0, *)) {
-        symbol = [UIImage systemImageNamed:@"slider.horizontal.3"];
-        if (!symbol) symbol = [UIImage systemImageNamed:@"gearshape.fill"];
-    }
-    if (symbol) {
-        [btn setImage:symbol forState:UIControlStateNormal];
-        btn.tintColor = [UIColor colorWithRed:0.80 green:0.85 blue:0.95 alpha:1.0]; // Slate Ice Blue
-    } else {
-        [btn setTitle:@"⚙️" forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:20.0];
-    }
-    
-    [btn addTarget:self action:@selector(floatingButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-    [btn addGestureRecognizer:pan];
-    self.floatingButton = btn;
-
-    [window addSubview:btn];
-    [window bringSubviewToFront:btn];
-}
-
-- (void)setFloatingButtonVisible:(BOOL)visible {
-    if (self.floatingButton) {
-        self.floatingButton.hidden = !visible;
-    }
-}
-
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *view = pan.view;
-    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    if (!view || !window) return;
-
-    CGPoint translation = [pan translationInView:window];
-    CGPoint center = view.center;
-    center.x += translation.x;
-    center.y += translation.y;
-
-    CGFloat halfW = view.bounds.size.width / 2.0;
-    CGFloat halfH = view.bounds.size.height / 2.0;
-    CGFloat minX = halfW + 8.0;
-    CGFloat maxX = window.bounds.size.width - halfW - 8.0;
-    CGFloat minY = halfH + window.safeAreaInsets.top + 8.0;
-    CGFloat maxY = window.bounds.size.height - halfH - window.safeAreaInsets.bottom - 8.0;
-
-    center.x = MAX(minX, MIN(maxX, center.x));
-    center.y = MAX(minY, MIN(maxY, center.y));
-    view.center = center;
-    [pan setTranslation:CGPointZero inView:window];
-
-    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat snapX = (center.x < window.bounds.size.width / 2.0) ? minX : maxX;
-        [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionCurveEaseOut animations:^{
-            view.center = CGPointMake(snapX, center.y);
-        } completion:nil];
-    }
-}
-
-- (void)floatingButtonTapped:(UIButton *)sender {
-    UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    UIViewController *root = window.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
-    }
-
-    AMHomeSettingsViewController *vc = [[AMHomeSettingsViewController alloc] init];
-    vc.modalPresentationStyle = UIModalPresentationFormSheet;
-    [root presentViewController:vc animated:YES completion:nil];
-}
-
-@end
 
 #pragma mark - Universal Haptic Silencer (Triệt tiêu toàn bộ rung phản hồi)
 
 static void hook_UIImpactFeedbackGenerator_impactOccurred(id self, SEL _cmd) {
     // Silent: Không rung máy khi chạm hoặc thao tác bất kỳ nút nào
+}
+
+static void hook_UIImpactFeedbackGenerator_impactOccurredWithIntensity(id self, SEL _cmd, CGFloat intensity) {
+    // Silent
 }
 
 static void hook_UISelectionFeedbackGenerator_selectionChanged(id self, SEL _cmd) {
@@ -2224,25 +1920,97 @@ static void hook_UINotificationFeedbackGenerator_notificationOccurred(id self, S
     // Silent: Không rung thông báo
 }
 
+static void hook_UIFeedbackGenerator_prepare(id self, SEL _cmd) {
+    // Silent
+}
+
+static void hook_UIFeedbackGenerator_activateWithCompletionBlock(id self, SEL _cmd, id block) {
+    if (block) {
+        void (^cb)(BOOL) = block;
+        cb(NO);
+    }
+}
+
+static BOOL hook_CHHapticEngine_startAndReturnError(id self, SEL _cmd, NSError **error) {
+    // Silent: CoreHaptics engine return success without starting vibration hardware
+    return YES;
+}
+
+static void hook_CHHapticEngine_startWithCompletionHandler(id self, SEL _cmd, id handler) {
+    if (handler) {
+        void (^cb)(NSError *) = handler;
+        cb(nil);
+    }
+}
+
+// Fishhook hooks for AudioServices
+static void (*orig_AudioServicesPlaySystemSound)(SystemSoundID);
+static void hook_AudioServicesPlaySystemSound(SystemSoundID soundID) {
+    // Suppress all haptic and vibration system sound IDs (1519: peek, 1520: pop, 1521: nope, 4095: vibrate, etc.)
+    if (soundID == 4095 || soundID == kSystemSoundID_Vibrate || (soundID >= 1510 && soundID <= 1530)) {
+        return;
+    }
+    if (orig_AudioServicesPlaySystemSound) {
+        orig_AudioServicesPlaySystemSound(soundID);
+    }
+}
+
+static void (*orig_AudioServicesPlaySystemSoundWithCompletion)(SystemSoundID, void (^)(void));
+static void hook_AudioServicesPlaySystemSoundWithCompletion(SystemSoundID soundID, void (^block)(void)) {
+    if (soundID == 4095 || soundID == kSystemSoundID_Vibrate || (soundID >= 1510 && soundID <= 1530)) {
+        if (block) block();
+        return;
+    }
+    if (orig_AudioServicesPlaySystemSoundWithCompletion) {
+        orig_AudioServicesPlaySystemSoundWithCompletion(soundID, block);
+    } else if (block) {
+        block();
+    }
+}
+
 static void AMNeutralizeAllHaptics(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        Class fbClass = objc_getClass("UIFeedbackGenerator");
+        if (fbClass) {
+            Method mPrep = class_getInstanceMethod(fbClass, @selector(prepare));
+            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
+            Method mAct = class_getInstanceMethod(fbClass, @selector(activateWithCompletionBlock:));
+            if (mAct) method_setImplementation(mAct, (IMP)hook_UIFeedbackGenerator_activateWithCompletionBlock);
+        }
+
         Class impactClass = objc_getClass("UIImpactFeedbackGenerator");
         if (impactClass) {
             Method m = class_getInstanceMethod(impactClass, @selector(impactOccurred));
             if (m) method_setImplementation(m, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
             Method mWithIntensity = class_getInstanceMethod(impactClass, @selector(impactOccurredWithIntensity:));
-            if (mWithIntensity) method_setImplementation(mWithIntensity, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
+            if (mWithIntensity) method_setImplementation(mWithIntensity, (IMP)hook_UIImpactFeedbackGenerator_impactOccurredWithIntensity);
+            Method mPrep = class_getInstanceMethod(impactClass, @selector(prepare));
+            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
         }
+
         Class selectClass = objc_getClass("UISelectionFeedbackGenerator");
         if (selectClass) {
             Method m = class_getInstanceMethod(selectClass, @selector(selectionChanged));
             if (m) method_setImplementation(m, (IMP)hook_UISelectionFeedbackGenerator_selectionChanged);
+            Method mPrep = class_getInstanceMethod(selectClass, @selector(prepare));
+            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
         }
+
         Class notifClass = objc_getClass("UINotificationFeedbackGenerator");
         if (notifClass) {
             Method m = class_getInstanceMethod(notifClass, @selector(notificationOccurred:));
             if (m) method_setImplementation(m, (IMP)hook_UINotificationFeedbackGenerator_notificationOccurred);
+            Method mPrep = class_getInstanceMethod(notifClass, @selector(prepare));
+            if (mPrep) method_setImplementation(mPrep, (IMP)hook_UIFeedbackGenerator_prepare);
+        }
+
+        Class chClass = objc_getClass("CHHapticEngine");
+        if (chClass) {
+            Method mStart = class_getInstanceMethod(chClass, @selector(startAndReturnError:));
+            if (mStart) method_setImplementation(mStart, (IMP)hook_CHHapticEngine_startAndReturnError);
+            Method mStartH = class_getInstanceMethod(chClass, @selector(startWithCompletionHandler:));
+            if (mStartH) method_setImplementation(mStartH, (IMP)hook_CHHapticEngine_startWithCompletionHandler);
         }
     });
 }
@@ -2675,14 +2443,16 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
     AMInitSmoothnessAndPerformanceEngine();
     AMUnlockProjectPackageLimit();
 
-    // 1. Rebind Keychain & Photos functions using Fishhook
-    rebind_symbols((struct rebinding[5]){
+    // 1. Rebind Keychain, Photos & AudioServices functions using Fishhook
+    rebind_symbols((struct rebinding[7]){
         {"SecItemAdd", (void *)hook_SecItemAdd, (void **)&orig_SecItemAdd},
         {"SecItemCopyMatching", (void *)hook_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching},
         {"SecItemUpdate", (void *)hook_SecItemUpdate, (void **)&orig_SecItemUpdate},
         {"SecItemDelete", (void *)hook_SecItemDelete, (void **)&orig_SecItemDelete},
-        {"UISaveVideoAtPathToSavedPhotosAlbum", (void *)hook_UISaveVideoAtPathToSavedPhotosAlbum, (void **)&orig_UISaveVideoAtPathToSavedPhotosAlbum}
-    }, 5);
+        {"UISaveVideoAtPathToSavedPhotosAlbum", (void *)hook_UISaveVideoAtPathToSavedPhotosAlbum, (void **)&orig_UISaveVideoAtPathToSavedPhotosAlbum},
+        {"AudioServicesPlaySystemSound", (void *)hook_AudioServicesPlaySystemSound, (void **)&orig_AudioServicesPlaySystemSound},
+        {"AudioServicesPlaySystemSoundWithCompletion", (void *)hook_AudioServicesPlaySystemSoundWithCompletion, (void **)&orig_AudioServicesPlaySystemSoundWithCompletion}
+    }, 7);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         // 2. Apply Pro Monetization state immediately and on launch notification
