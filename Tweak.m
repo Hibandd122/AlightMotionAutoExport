@@ -1978,12 +1978,23 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 #pragma mark - Universal Haptic Silencer (Triệt tiêu 100% mọi nguồn phát rung)
 
-static void noop_haptic_void(id self, SEL _cmd) {
+static void noop_haptic_void(id self, SEL _cmd, ...) {
     // 100% Im lặng - không rung
 }
 
-static BOOL noop_haptic_false(id self, SEL _cmd) {
+static BOOL noop_haptic_false(id self, SEL _cmd, ...) {
     return NO;
+}
+
+static id noop_haptic_nil(id self, SEL _cmd, ...) {
+    return nil;
+}
+
+static void hook_CHHapticEngine_startWithCompletionHandler(id self, SEL _cmd, void (^handler)(NSError *)) {
+    if (handler) {
+        NSError *err = [NSError errorWithDomain:@"CHHapticErrorDomain" code:-4805 userInfo:@{NSLocalizedDescriptionKey: @"Haptics disabled"}];
+        handler(err);
+    }
 }
 
 static long long hook_UIDevice_feedbackSupportLevel(id self, SEL _cmd) {
@@ -2015,23 +2026,29 @@ static void hook_AudioServicesPlayAlertSoundWithCompletion(SystemSoundID soundID
     return;
 }
 
-static void neutralizeAllClassMethods(const char *className) {
+static void neutralizeAllClassAndMetaMethods(const char *className) {
     Class cls = objc_getClass(className);
     if (!cls) return;
 
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    if (methods) {
-        for (unsigned int i = 0; i < count; i++) {
-            SEL sel = method_getName(methods[i]);
-            const char *selName = sel_getName(sel);
-            if (strcmp(selName, "init") == 0 || strcmp(selName, "dealloc") == 0 ||
-                strncmp(selName, "initWith", 8) == 0 || strcmp(selName, ".cxx_destruct") == 0) {
-                continue;
+    Class classesToScan[] = { cls, object_getClass((id)cls) };
+    for (int c = 0; c < 2; c++) {
+        Class targetCls = classesToScan[c];
+        if (!targetCls) continue;
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(targetCls, &count);
+        if (methods) {
+            for (unsigned int i = 0; i < count; i++) {
+                SEL sel = method_getName(methods[i]);
+                const char *selName = sel_getName(sel);
+                if (strcmp(selName, "init") == 0 || strcmp(selName, "dealloc") == 0 ||
+                    strncmp(selName, "initWith", 8) == 0 || strcmp(selName, ".cxx_destruct") == 0 ||
+                    strcmp(selName, "class") == 0 || strcmp(selName, "description") == 0) {
+                    continue;
+                }
+                method_setImplementation(methods[i], (IMP)noop_haptic_void);
             }
-            method_setImplementation(methods[i], (IMP)noop_haptic_void);
+            free(methods);
         }
-        free(methods);
     }
 }
 
@@ -2048,6 +2065,13 @@ static void AMNeutralizeAllHaptics(void) {
             Method mF2 = class_getInstanceMethod(devCls, @selector(feedbackSupportLevel));
             if (mF2) method_setImplementation(mF2, (IMP)hook_UIDevice_feedbackSupportLevel);
             else class_addMethod(devCls, @selector(feedbackSupportLevel), (IMP)hook_UIDevice_feedbackSupportLevel, "q@:");
+
+            Class metaDev = object_getClass((id)devCls);
+            if (metaDev) {
+                Method mF3 = class_getInstanceMethod(metaDev, @selector(_feedbackSupportLevel));
+                if (mF3) method_setImplementation(mF3, (IMP)hook_UIDevice_feedbackSupportLevel);
+                else class_addMethod(metaDev, @selector(_feedbackSupportLevel), (IMP)hook_UIDevice_feedbackSupportLevel, "q@:");
+            }
         }
 
         // 2. Tắt master switch trên UIFeedbackGenerator
@@ -2061,7 +2085,37 @@ static void AMNeutralizeAllHaptics(void) {
             }
         }
 
-        // 3. Triệt tiêu toàn bộ methods trong tất cả các lớp Feedback Generator của UIKit
+        // 3. Triệt tiêu rõ ràng từng phương thức chính của UIKit Feedback Generator
+        Class selGen = [UISelectionFeedbackGenerator class];
+        if (selGen) {
+            Method m = class_getInstanceMethod(selGen, @selector(selectionChanged));
+            if (m) method_setImplementation(m, (IMP)noop_haptic_void);
+        }
+        Class impGen = [UIImpactFeedbackGenerator class];
+        if (impGen) {
+            Method m1 = class_getInstanceMethod(impGen, @selector(impactOccurred));
+            if (m1) method_setImplementation(m1, (IMP)noop_haptic_void);
+            Method m2 = class_getInstanceMethod(impGen, @selector(impactOccurredWithIntensity:));
+            if (m2) method_setImplementation(m2, (IMP)noop_haptic_void);
+        }
+        Class notGen = [UINotificationFeedbackGenerator class];
+        if (notGen) {
+            Method m = class_getInstanceMethod(notGen, @selector(notificationOccurred:));
+            if (m) method_setImplementation(m, (IMP)noop_haptic_void);
+        }
+        Class baseGen = [UIFeedbackGenerator class];
+        if (baseGen) {
+            Method mPrep = class_getInstanceMethod(baseGen, @selector(prepare));
+            if (mPrep) method_setImplementation(mPrep, (IMP)noop_haptic_void);
+            SEL selPlay = sel_registerName("_playFeedback:atTime:");
+            Method mPlay = class_getInstanceMethod(baseGen, selPlay);
+            if (mPlay) method_setImplementation(mPlay, (IMP)noop_haptic_void);
+            SEL selPlay2 = sel_registerName("_playFeedback:");
+            Method mPlay2 = class_getInstanceMethod(baseGen, selPlay2);
+            if (mPlay2) method_setImplementation(mPlay2, (IMP)noop_haptic_void);
+        }
+
+        // 4. Triệt tiêu toàn bộ methods trong tất cả các lớp Feedback Generator của UIKit (Instance + Class)
         const char *uiFeedbackClasses[] = {
             "UIFeedbackGenerator",
             "UIImpactFeedbackGenerator",
@@ -2075,24 +2129,33 @@ static void AMNeutralizeAllHaptics(void) {
             NULL
         };
         for (int i = 0; uiFeedbackClasses[i] != NULL; i++) {
-            neutralizeAllClassMethods(uiFeedbackClasses[i]);
+            neutralizeAllClassAndMetaMethods(uiFeedbackClasses[i]);
         }
 
-        // 4. Triệt tiêu CoreHaptics (CHHapticEngine & CHHapticPatternPlayer)
-        Class chClass = objc_getClass("CHHapticEngine");
-        if (chClass) {
-            Class metaCh = object_getClass((id)chClass);
+        // 5. Triệt tiêu CoreHaptics (CHHapticEngine, CHHapticPatternPlayer & capabilities)
+        Class chEngineCls = objc_getClass("CHHapticEngine");
+        if (chEngineCls) {
+            Class metaCh = object_getClass((id)chEngineCls);
             if (metaCh) {
                 Method m1 = class_getInstanceMethod(metaCh, @selector(capabilitiesForHardware));
                 if (m1) method_setImplementation(m1, (IMP)noop_haptic_false);
                 Method m2 = class_getInstanceMethod(metaCh, @selector(supportsHaptics));
                 if (m2) method_setImplementation(m2, (IMP)noop_haptic_false);
             }
-            neutralizeAllClassMethods("CHHapticEngine");
-        }
-        neutralizeAllClassMethods("CHHapticPatternPlayer");
+            Method mStart = class_getInstanceMethod(chEngineCls, sel_registerName("startAndReturnError:"));
+            if (mStart) method_setImplementation(mStart, (IMP)noop_haptic_false);
+            Method mCreate = class_getInstanceMethod(chEngineCls, sel_registerName("createPlayerWithPattern:error:"));
+            if (mCreate) method_setImplementation(mCreate, (IMP)noop_haptic_nil);
+            Method mCreateAdv = class_getInstanceMethod(chEngineCls, sel_registerName("createAdvancedPlayerWithPattern:error:"));
+            if (mCreateAdv) method_setImplementation(mCreateAdv, (IMP)noop_haptic_nil);
+            Method mStartComp = class_getInstanceMethod(chEngineCls, sel_registerName("startWithCompletionHandler:"));
+            if (mStartComp) method_setImplementation(mStartComp, (IMP)hook_CHHapticEngine_startWithCompletionHandler);
 
-        // 5. Triệt tiêu toàn bộ lớp Haptic riêng của Alight Motion & SDKs
+            neutralizeAllClassAndMetaMethods("CHHapticEngine");
+        }
+        neutralizeAllClassAndMetaMethods("CHHapticPatternPlayer");
+
+        // 6. Triệt tiêu toàn bộ lớp Haptic riêng của Alight Motion & SDKs
         const char *amHapticClasses[] = {
             "_TtC12AlightMotion6Haptic",
             "_TtCC12AlightMotion6Haptic6Impact",
@@ -2103,7 +2166,7 @@ static void AMNeutralizeAllHaptics(void) {
             NULL
         };
         for (int i = 0; amHapticClasses[i] != NULL; i++) {
-            neutralizeAllClassMethods(amHapticClasses[i]);
+            neutralizeAllClassAndMetaMethods(amHapticClasses[i]);
         }
 
         NSLog(@"[AlightMotionUltra] Successfully neutralized 100%% of all haptic engines globally!");
