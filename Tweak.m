@@ -2197,13 +2197,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (void)floatingButtonTapped:(UIButton *)sender {
-    // Native Haptic Feedback
-    if (@available(iOS 10.0, *)) {
-        UIImpactFeedbackGenerator *haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-        [haptic prepare];
-        [haptic impactOccurred];
-    }
-
     UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
     UIViewController *root = window.rootViewController;
     while (root.presentedViewController) {
@@ -2216,6 +2209,43 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 @end
+
+#pragma mark - Universal Haptic Silencer (Triệt tiêu toàn bộ rung phản hồi)
+
+static void hook_UIImpactFeedbackGenerator_impactOccurred(id self, SEL _cmd) {
+    // Silent: Không rung máy khi chạm hoặc thao tác bất kỳ nút nào
+}
+
+static void hook_UISelectionFeedbackGenerator_selectionChanged(id self, SEL _cmd) {
+    // Silent: Không rung khi cuộn timeline hoặc chọn layer
+}
+
+static void hook_UINotificationFeedbackGenerator_notificationOccurred(id self, SEL _cmd, NSInteger type) {
+    // Silent: Không rung thông báo
+}
+
+static void AMNeutralizeAllHaptics(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class impactClass = objc_getClass("UIImpactFeedbackGenerator");
+        if (impactClass) {
+            Method m = class_getInstanceMethod(impactClass, @selector(impactOccurred));
+            if (m) method_setImplementation(m, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
+            Method mWithIntensity = class_getInstanceMethod(impactClass, @selector(impactOccurredWithIntensity:));
+            if (mWithIntensity) method_setImplementation(mWithIntensity, (IMP)hook_UIImpactFeedbackGenerator_impactOccurred);
+        }
+        Class selectClass = objc_getClass("UISelectionFeedbackGenerator");
+        if (selectClass) {
+            Method m = class_getInstanceMethod(selectClass, @selector(selectionChanged));
+            if (m) method_setImplementation(m, (IMP)hook_UISelectionFeedbackGenerator_selectionChanged);
+        }
+        Class notifClass = objc_getClass("UINotificationFeedbackGenerator");
+        if (notifClass) {
+            Method m = class_getInstanceMethod(notifClass, @selector(notificationOccurred:));
+            if (m) method_setImplementation(m, (IMP)hook_UINotificationFeedbackGenerator_notificationOccurred);
+        }
+    });
+}
 
 
 
@@ -2640,6 +2670,7 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
 __attribute__((constructor)) static void initAlightMotionUltra() {
     // 0. Instant Cold Boot: Neutralize heavy ad & telemetry SDKs synchronously before UIApplication starts
     AMNeutralizeAdNetworks();
+    AMNeutralizeAllHaptics();
     AMApplyProSettings();
     AMInitSmoothnessAndPerformanceEngine();
     AMUnlockProjectPackageLimit();
@@ -2657,6 +2688,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
         // 2. Apply Pro Monetization state immediately and on launch notification
         AMApplyProSettings();
         AMNeutralizeAdNetworks();
+        AMNeutralizeAllHaptics();
         AMInitSmoothnessAndPerformanceEngine();
         AMUnlockProjectPackageLimit();
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
@@ -2665,6 +2697,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
                                                       usingBlock:^(NSNotification * _Nonnull note) {
             AMApplyProSettings();
             AMNeutralizeAdNetworks();
+            AMNeutralizeAllHaptics();
             AMInitSmoothnessAndPerformanceEngine();
             AMUnlockProjectPackageLimit();
         }];
