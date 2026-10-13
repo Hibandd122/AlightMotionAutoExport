@@ -2217,92 +2217,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - =========================================================
-#pragma mark 7. Liquid Glass Button & Elastic Motion Engine
-#pragma mark - =========================================================
 
-static void (*orig_UIButton_touchesBegan)(UIButton *, SEL, NSSet<UITouch *> *, UIEvent *);
-static void hook_UIButton_touchesBegan(UIButton *self, SEL _cmd, NSSet<UITouch *> *touches, UIEvent *event) {
-    if (orig_UIButton_touchesBegan) {
-        orig_UIButton_touchesBegan(self, _cmd, touches, event);
-    }
-    // Elastic liquid compression (co dãn giọt nước)
-    [UIView animateWithDuration:0.12 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.transform = CGAffineTransformMakeScale(0.92, 0.92);
-        self.alpha = 0.88;
-    } completion:nil];
-}
-
-static void (*orig_UIButton_touchesEnded)(UIButton *, SEL, NSSet<UITouch *> *, UIEvent *);
-static void hook_UIButton_touchesEnded(UIButton *self, SEL _cmd, NSSet<UITouch *> *touches, UIEvent *event) {
-    if (orig_UIButton_touchesEnded) {
-        orig_UIButton_touchesEnded(self, _cmd, touches, event);
-    }
-    // Liquid haptic impulse
-    if (@available(iOS 10.0, *)) {
-        UIImpactFeedbackGenerator *haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-        [haptic prepare];
-        [haptic impactOccurred];
-    }
-    // Spring liquid rebound (bật nảy lò xo đàn hồi mượt mà)
-    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.48 initialSpringVelocity:0.8 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.transform = CGAffineTransformIdentity;
-        self.alpha = 1.0;
-    } completion:nil];
-}
-
-static void (*orig_UIButton_touchesCancelled)(UIButton *, SEL, NSSet<UITouch *> *, UIEvent *);
-static void hook_UIButton_touchesCancelled(UIButton *self, SEL _cmd, NSSet<UITouch *> *touches, UIEvent *event) {
-    if (orig_UIButton_touchesCancelled) {
-        orig_UIButton_touchesCancelled(self, _cmd, touches, event);
-    }
-    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.transform = CGAffineTransformIdentity;
-        self.alpha = 1.0;
-    } completion:nil];
-}
-
-static void (*orig_UIButton_layoutSubviews)(UIButton *, SEL);
-static void hook_UIButton_layoutSubviews(UIButton *self, SEL _cmd) {
-    if (orig_UIButton_layoutSubviews) {
-        orig_UIButton_layoutSubviews(self, _cmd);
-    }
-    // Continuous liquid curvature (bo cong liền mạch tự nhiên)
-    if (@available(iOS 13.0, *)) {
-        if (self.layer.cornerRadius > 4.0) {
-            self.layer.cornerCurve = kCACornerCurveContinuous;
-        }
-    }
-}
-
-static void AMInitLiquidGlassButtonEngine(void) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        Class btnClass = [UIButton class];
-        if (btnClass) {
-            Method mBegan = class_getInstanceMethod(btnClass, @selector(touchesBegan:withEvent:));
-            if (mBegan) {
-                orig_UIButton_touchesBegan = (void *)method_getImplementation(mBegan);
-                method_setImplementation(mBegan, (IMP)hook_UIButton_touchesBegan);
-            }
-            Method mEnded = class_getInstanceMethod(btnClass, @selector(touchesEnded:withEvent:));
-            if (mEnded) {
-                orig_UIButton_touchesEnded = (void *)method_getImplementation(mEnded);
-                method_setImplementation(mEnded, (IMP)hook_UIButton_touchesEnded);
-            }
-            Method mCancelled = class_getInstanceMethod(btnClass, @selector(touchesCancelled:withEvent:));
-            if (mCancelled) {
-                orig_UIButton_touchesCancelled = (void *)method_getImplementation(mCancelled);
-                method_setImplementation(mCancelled, (IMP)hook_UIButton_touchesCancelled);
-            }
-            Method mLayout = class_getInstanceMethod(btnClass, @selector(layoutSubviews));
-            if (mLayout) {
-                orig_UIButton_layoutSubviews = (void *)method_getImplementation(mLayout);
-                method_setImplementation(mLayout, (IMP)hook_UIButton_layoutSubviews);
-            }
-        }
-    });
-}
 
 #pragma mark - Hook UITextView (Lyrics Accessory Bar)
 
@@ -2727,7 +2642,6 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
     AMNeutralizeAdNetworks();
     AMApplyProSettings();
     AMInitSmoothnessAndPerformanceEngine();
-    AMInitLiquidGlassButtonEngine();
     AMUnlockProjectPackageLimit();
 
     // 1. Rebind Keychain & Photos functions using Fishhook
@@ -2744,7 +2658,6 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
         AMApplyProSettings();
         AMNeutralizeAdNetworks();
         AMInitSmoothnessAndPerformanceEngine();
-        AMInitLiquidGlassButtonEngine();
         AMUnlockProjectPackageLimit();
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                           object:nil
@@ -2753,7 +2666,6 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
             AMApplyProSettings();
             AMNeutralizeAdNetworks();
             AMInitSmoothnessAndPerformanceEngine();
-            AMInitLiquidGlassButtonEngine();
             AMUnlockProjectPackageLimit();
         }];
 
