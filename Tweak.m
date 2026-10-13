@@ -263,6 +263,41 @@ static void hook_IASDKCore_initWithAppID(id self, SEL _cmd, id appId, void (^com
     }
 }
 
+// Block Adjust SDK Telemetry
+static void hook_Adjust_trackEvent(id self, SEL _cmd, id event) {
+    // Drop Adjust tracking silently
+}
+
+static void hook_Adjust_appDidLaunch(id self, SEL _cmd, id config) {
+    NSLog(@"[AlightMotionUltra] Neutralized Adjust appDidLaunch");
+}
+
+// Zero-Overhead Network Ad Sinkhole: Immediately drops requests to ad/tracking networks
+static NSURLSessionDataTask *(*orig_NSURLSession_dataTaskWithRequest_completionHandler)(NSURLSession *, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *));
+static NSURLSessionDataTask *hook_NSURLSession_dataTaskWithRequest_completionHandler(NSURLSession *self, SEL _cmd, NSURLRequest *request, void (^completionHandler)(NSData *, NSURLResponse *, NSError *)) {
+    NSString *urlString = request.URL.absoluteString.lowercaseString;
+    if (urlString) {
+        if ([urlString containsString:@"googleads"] ||
+            [urlString containsString:@"doubleclick.net"] ||
+            [urlString containsString:@"ironsrc.com"] ||
+            [urlString containsString:@"vungle.com"] ||
+            [urlString containsString:@"applovin.com"] ||
+            [urlString containsString:@"fyber.com"] ||
+            [urlString containsString:@"app-measurement.com"] ||
+            [urlString containsString:@"crashlytics.com"] ||
+            [urlString containsString:@"adjust.com"]) {
+            if (completionHandler) {
+                NSHTTPURLResponse *fakeResp = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{}];
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+                    completionHandler([NSData data], fakeResp, nil);
+                });
+            }
+            return nil;
+        }
+    }
+    return orig_NSURLSession_dataTaskWithRequest_completionHandler ? orig_NSURLSession_dataTaskWithRequest_completionHandler(self, _cmd, request, completionHandler) : nil;
+}
+
 static void AMNeutralizeAdNetworks(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -323,6 +358,23 @@ static void AMNeutralizeAdNetworks(void) {
         if (iaSdkClass) {
             Method mInitApp = class_getInstanceMethod(iaSdkClass, @selector(initWithAppID:completionBlock:completionQueue:));
             if (mInitApp) method_setImplementation(mInitApp, (IMP)hook_IASDKCore_initWithAppID);
+        }
+
+        // 7. Adjust SDK
+        Class adjClass = objc_getClass("Adjust");
+        if (adjClass) {
+            Method mEvent = class_getClassMethod(adjClass, @selector(trackEvent:));
+            if (mEvent) method_setImplementation(mEvent, (IMP)hook_Adjust_trackEvent);
+            Method mLaunch = class_getClassMethod(adjClass, @selector(appDidLaunch:));
+            if (mLaunch) method_setImplementation(mLaunch, (IMP)hook_Adjust_appDidLaunch);
+        }
+
+        // 8. Network Level Sinkhole
+        Class sessionClass = [NSURLSession class];
+        Method mTask = class_getInstanceMethod(sessionClass, @selector(dataTaskWithRequest:completionHandler:));
+        if (mTask) {
+            orig_NSURLSession_dataTaskWithRequest_completionHandler = (void *)method_getImplementation(mTask);
+            method_setImplementation(mTask, (IMP)hook_NSURLSession_dataTaskWithRequest_completionHandler);
         }
     });
 }
@@ -2435,6 +2487,18 @@ static BOOL hook_NSProcessInfo_isLowPowerModeEnabled(id self, SEL _cmd) {
     return NO; // Never throttle CPU/GPU
 }
 
+static UIDeviceBatteryState hook_UIDevice_batteryState(id self, SEL _cmd) {
+    return UIDeviceBatteryStateCharging; // Always charging for max CPU/GPU clock
+}
+
+static float hook_UIDevice_batteryLevel(id self, SEL _cmd) {
+    return 1.0f; // 100% full battery
+}
+
+static BOOL hook_UIDevice_isBatteryMonitoringEnabled(id self, SEL _cmd) {
+    return NO;
+}
+
 // 4. Instant Zero-Stall Video Playback (Timeline Preview Starts Immediately)
 static void (*orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling)(id, SEL, BOOL);
 static void hook_AVPlayer_setAutomaticallyWaitsToMinimizeStalling(id self, SEL _cmd, BOOL waits) {
@@ -2493,7 +2557,18 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
             }
         }
 
-        // 4. Hook AVPlayer for Zero-Stall Playback
+        // 4. Hook UIDevice to prevent Battery Low Power Clocks
+        Class devClass = [UIDevice class];
+        if (devClass) {
+            Method mBatState = class_getInstanceMethod(devClass, @selector(batteryState));
+            if (mBatState) method_setImplementation(mBatState, (IMP)hook_UIDevice_batteryState);
+            Method mBatLvl = class_getInstanceMethod(devClass, @selector(batteryLevel));
+            if (mBatLvl) method_setImplementation(mBatLvl, (IMP)hook_UIDevice_batteryLevel);
+            Method mBatMon = class_getInstanceMethod(devClass, @selector(isBatteryMonitoringEnabled));
+            if (mBatMon) method_setImplementation(mBatMon, (IMP)hook_UIDevice_isBatteryMonitoringEnabled);
+        }
+
+        // 5. Hook AVPlayer for Zero-Stall Playback
         Class avClass = [AVPlayer class];
         if (avClass) {
             Method mStall = class_getInstanceMethod(avClass, @selector(setAutomaticallyWaitsToMinimizeStalling:));
@@ -2503,7 +2578,7 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
             }
         }
 
-        // 5. Expand Cache
+        // 6. Expand Cache
         AMOptimizeCacheAndMemory();
         NSLog(@"[AlightMotionUltra] Successfully initialized 120 FPS ProMotion & Metal Triple-Buffering Engine!");
     });
