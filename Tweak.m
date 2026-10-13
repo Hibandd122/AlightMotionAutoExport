@@ -387,6 +387,46 @@ static int64_t hook_ProjectPackage_freeUserMaxDownloadSize(id self, SEL _cmd) {
     return 53687091200LL; // 50 GB
 }
 
+static void (*orig_UIViewController_presentViewController_animated_completion)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
+
+static void hook_UIViewController_presentViewController_animated_completion(UIViewController *self, SEL _cmd, UIViewController *vcToPresent, BOOL animated, void (^completion)(void)) {
+    if ([vcToPresent isKindOfClass:[UIAlertController class]]) {
+        UIAlertController *alert = (UIAlertController *)vcToPresent;
+        NSString *title = alert.title ?: @"";
+        NSString *message = alert.message ?: @"";
+        
+        BOOL shouldBlock = NO;
+        if ([title containsString:@"Cần đăng nhập"] ||
+            [title containsString:@"đăng nhập"] ||
+            [title containsString:@"Sign In"] ||
+            [title containsString:@"Log In"] ||
+            [title containsString:@"Không khớp"] ||
+            [title containsString:@"Mismatch"] ||
+            [title containsString:@"Thành viên"] ||
+            [title containsString:@"Membership"] ||
+            [message containsString:@"thẻ thành viên"] ||
+            [message containsString:@"thành viên của bạn"] ||
+            [message containsString:@"đăng nhập bằng tài khoản"] ||
+            [message containsString:@"linked to your membership"] ||
+            [message containsString:@"linked with your membership"] ||
+            [message containsString:@"sign_in_required"]) {
+            shouldBlock = YES;
+        }
+        
+        if (shouldBlock) {
+            NSLog(@"[AlightMotionUltra] Successfully suppressed membership login alert: [%@] - [%@]", title, message);
+            if (completion) {
+                dispatch_async(dispatch_get_main_queue(), completion);
+            }
+            return;
+        }
+    }
+    
+    if (orig_UIViewController_presentViewController_animated_completion) {
+        orig_UIViewController_presentViewController_animated_completion(self, _cmd, vcToPresent, animated, completion);
+    }
+}
+
 static void AMUnlockProjectPackageLimit(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -397,7 +437,7 @@ static void AMUnlockProjectPackageLimit(void) {
         [ud setObject:@YES forKey:@"benefit_project_package_sharing"];
         [ud synchronize];
 
-        // Hook any classes responding to freeUserMaxDownloadSize
+        // 1. Hook any classes responding to freeUserMaxDownloadSize
         const char *targetClasses[] = {
             "_TtC12AlightMotion15ProjectPackager",
             "_TtC12AlightMotion15PackageImporter",
@@ -423,6 +463,40 @@ static void AMUnlockProjectPackageLimit(void) {
             Method mClass = class_getClassMethod(cls, selClass);
             if (mClass) {
                 method_setImplementation(mClass, (IMP)hook_ProjectPackage_freeUserMaxDownloadSize);
+            }
+        }
+
+        // 2. Swizzle UIViewController presentViewController:animated:completion: to intercept any login popups
+        Method mPresent = class_getInstanceMethod([UIViewController class], @selector(presentViewController:animated:completion:));
+        if (mPresent) {
+            orig_UIViewController_presentViewController_animated_completion = (void *)method_getImplementation(mPresent);
+            method_setImplementation(mPresent, (IMP)hook_UIViewController_presentViewController_animated_completion);
+        }
+
+        // 3. Apply native ARM64 memory patches to bypass all membership & account checks permanently
+        uintptr_t slide = (uintptr_t)_dyld_get_image_vmaddr_slide(0);
+        mach_port_t self_task = mach_task_self();
+        struct {
+            uintptr_t offset;
+            uint32_t opcode;
+        } patches[] = {
+            { 0x269764, 0x14000424 }, // Gatekeeper bypass -> B 0x10026a7f4
+            { 0x269f44, 0x1400022c }, // Size check bypass -> B 0x10026a7f4
+            { 0x269f64, 0x14000224 }, // Size fallback entry -> B 0x10026a7f4
+            { 0x269b60, 0x14000325 }, // Wrong account branch -> B 0x10026a7f4
+            { 0x26a3b8, 0x1400010f }, // Sign in required entry -> B 0x10026a7f4
+            { 0xb35eec, 0x1400004d }, // Package verify check 2 -> B 0x100b36020
+        };
+        for (int i = 0; i < 6; i++) {
+            uintptr_t targetAddr = slide + 0x100000000 + patches[i].offset;
+            vm_address_t page_start = (vm_address_t)(targetAddr & ~0xfff);
+            kern_return_t kr = vm_protect(self_task, page_start, 0x2000, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+            if (kr == KERN_SUCCESS) {
+                *(uint32_t *)targetAddr = patches[i].opcode;
+                vm_protect(self_task, page_start, 0x2000, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
+                NSLog(@"[AlightMotionUltra] Successfully applied native ARM64 memory patch at 0x%lx (offset 0x%lx) -> 0x%08x", targetAddr, patches[i].offset, patches[i].opcode);
+            } else {
+                NSLog(@"[AlightMotionUltra] vm_protect failed at offset 0x%lx: %d", patches[i].offset, kr);
             }
         }
     });
@@ -2169,126 +2243,7 @@ static void AMApplyDefaultWhiteColorPatch(void) {
     }
 }
 
-#pragma mark - =========================================================
-#pragma mark Pure OLED Dark Mode Engine (Based on Android APK Reference)
-#pragma mark =========================================================
 
-#define COLOR_OLED_BG       [UIColor colorWithRed:0.00 green:0.00 blue:0.00 alpha:1.0] // #000000
-#define COLOR_SURFACE_BASE  [UIColor colorWithRed:0.09 green:0.09 blue:0.11 alpha:1.0] // #17181B
-#define COLOR_SURFACE_CARD  [UIColor colorWithRed:0.13 green:0.13 blue:0.17 alpha:1.0] // #21222B
-#define COLOR_ELEVATED      [UIColor colorWithRed:0.15 green:0.16 blue:0.19 alpha:1.0] // #262831
-#define COLOR_PRIMARY_ACC   [UIColor colorWithRed:0.00 green:0.80 blue:0.68 alpha:1.0] // #00CCAD
-#define COLOR_SEC_ACC       [UIColor colorWithRed:0.00 green:0.90 blue:0.46 alpha:1.0] // #00E575
-#define COLOR_DIVIDER       [UIColor colorWithRed:0.37 green:0.38 blue:0.44 alpha:1.0] // #5F606F
-#define COLOR_TEXT_PRI      [UIColor colorWithRed:1.00 green:1.00 blue:1.00 alpha:1.0] // #FFFFFF
-#define COLOR_TEXT_SEC      [UIColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0] // #D9D9D9
-
-static void (*orig_UIViewController_viewWillAppear)(UIViewController *, SEL, BOOL);
-
-static void applyDarkThemeRecursive(UIView *view, BOOL isRoot) {
-    if (!view) return;
-    
-    // Do NOT recolor Metal video viewport / Canvas texture layer
-    NSString *vClass = NSStringFromClass([view class]);
-    if ([vClass containsString:@"MTKView"] || [vClass containsString:@"CAMetalLayer"] || [vClass containsString:@"Canvas"]) {
-        return;
-    }
-    
-    // Replace light / white backgrounds with OLED Black or Dark Surface
-    if (view.backgroundColor) {
-        CGFloat r, g, b, a;
-        if ([view.backgroundColor getRed:&r green:&g blue:&b alpha:&a]) {
-            if (r > 0.85 && g > 0.85 && b > 0.85 && a > 0.5) {
-                view.backgroundColor = isRoot ? COLOR_OLED_BG : COLOR_SURFACE_CARD;
-            } else if (r > 0.5 && g > 0.5 && b > 0.5 && a > 0.5) {
-                view.backgroundColor = COLOR_ELEVATED;
-            }
-        }
-    }
-    
-    // TableView & CollectionView styling
-    if ([view isKindOfClass:[UITableView class]]) {
-        UITableView *tv = (UITableView *)view;
-        tv.backgroundColor = COLOR_OLED_BG;
-        tv.backgroundView = nil;
-        tv.separatorColor = COLOR_DIVIDER;
-    } else if ([view isKindOfClass:[UICollectionView class]]) {
-        UICollectionView *cv = (UICollectionView *)view;
-        cv.backgroundColor = COLOR_OLED_BG;
-        cv.backgroundView = nil;
-    }
-    
-    // Contrast safeguard: Elevate dark text (< 0.4 brightness) to light text to prevent black-on-black invisibility
-    if ([view isKindOfClass:[UILabel class]]) {
-        UILabel *lbl = (UILabel *)view;
-        CGFloat r, g, b, a;
-        if ([lbl.textColor getRed:&r green:&g blue:&b alpha:&a]) {
-            if (r < 0.40 && g < 0.40 && b < 0.40 && a > 0.5) {
-                lbl.textColor = COLOR_TEXT_PRI;
-            }
-        }
-    } else if ([view isKindOfClass:[UITextField class]]) {
-        UITextField *tf = (UITextField *)view;
-        tf.keyboardAppearance = UIKeyboardAppearanceDark;
-        CGFloat r, g, b, a;
-        if ([tf.textColor getRed:&r green:&g blue:&b alpha:&a]) {
-            if (r < 0.40 && g < 0.40 && b < 0.40 && a > 0.5) {
-                tf.textColor = COLOR_TEXT_PRI;
-            }
-        }
-    } else if ([view isKindOfClass:[UITextView class]]) {
-        UITextView *tv = (UITextView *)view;
-        tv.keyboardAppearance = UIKeyboardAppearanceDark;
-        CGFloat r, g, b, a;
-        if ([tv.textColor getRed:&r green:&g blue:&b alpha:&a]) {
-            if (r < 0.40 && g < 0.40 && b < 0.40 && a > 0.5) {
-                tv.textColor = COLOR_TEXT_PRI;
-            }
-        }
-    } else if ([vClass containsString:@"WKWebView"]) {
-        view.backgroundColor = COLOR_OLED_BG;
-        view.opaque = NO;
-        if ([view respondsToSelector:@selector(scrollView)]) {
-            UIScrollView *sv = [view performSelector:@selector(scrollView)];
-            sv.backgroundColor = COLOR_OLED_BG;
-            sv.indicatorStyle = UIScrollViewIndicatorStyleWhite;
-        }
-    }
-    
-    for (UIView *sub in view.subviews) {
-        applyDarkThemeRecursive(sub, NO);
-    }
-}
-
-static void hook_UIViewController_viewWillAppear(UIViewController *self, SEL _cmd, BOOL animated) {
-    if (orig_UIViewController_viewWillAppear) {
-        orig_UIViewController_viewWillAppear(self, _cmd, animated);
-    }
-    
-    NSString *clsName = NSStringFromClass([self class]);
-    if ([clsName containsString:@"AlightMotion"] || [clsName containsString:@"Edit"] || [clsName containsString:@"Home"] || [clsName containsString:@"Project"]) {
-        if (self.view) {
-            self.view.backgroundColor = COLOR_OLED_BG;
-            applyDarkThemeRecursive(self.view, YES);
-        }
-        
-        UINavigationBar *navBar = self.navigationController.navigationBar;
-        if (navBar) {
-            navBar.barTintColor = COLOR_OLED_BG;
-            navBar.backgroundColor = COLOR_OLED_BG;
-            navBar.tintColor = COLOR_PRIMARY_ACC;
-            navBar.titleTextAttributes = @{NSForegroundColorAttributeName: COLOR_TEXT_PRI};
-        }
-        
-        UITabBar *tabBar = self.tabBarController.tabBar;
-        if (tabBar) {
-            tabBar.barTintColor = COLOR_OLED_BG;
-            tabBar.backgroundColor = COLOR_OLED_BG;
-            tabBar.tintColor = COLOR_PRIMARY_ACC;
-            tabBar.unselectedItemTintColor = COLOR_TEXT_SEC;
-        }
-    }
-}
 
 #pragma mark - =========================================================
 #pragma mark 8. Ultimate Smoothness & 120 FPS Performance Engine
