@@ -1622,121 +1622,156 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor blackColor]; // #000000 Pure OLED Black
+    // Apple Native iOS 18 Dark Slate Background
+    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.10 alpha:1.0]; // #12141A Midnight Slate
 
     CGFloat w = self.view.bounds.size.width;
 
+    // Header with App Title & Subtitle
+    UIView *headerView = [[UIView alloc] initWithFrame:CGRectMake(20, 20, w - 40, 50)];
+    headerView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:headerView];
 
-    // Header
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, w - 40, 28)];
-    titleLabel.text = @"⚙️ Cài Đặt Alight Motion Pro";
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, headerView.bounds.size.width, 26)];
+    titleLabel.text = @"Alight Motion Pro";
     titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    [self.view addSubview:titleLabel];
+    titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    [headerView addSubview:titleLabel];
 
-    // Card 1: Batch Lyrics Manager (Nạp & Xóa Hàng Đợi)
-    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 60, w - 32, 95)];
-    card1.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.22 alpha:1.0]; // #1F2238
-    card1.layer.cornerRadius = 14.0;
+    UILabel *subTitle = [[UILabel alloc] initWithFrame:CGRectMake(0, 26, headerView.bounds.size.width, 18)];
+    subTitle.text = @"Bản Dựng Tối Ưu • iOS 18 Native Experience";
+    subTitle.textColor = [UIColor colorWithRed:0.58 green:0.62 blue:0.70 alpha:1.0]; // Slate muted
+    subTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+    [headerView addSubview:subTitle];
+
+    // Card 1: Batch Lyrics Manager (Apple Native Slate Card)
+    UIView *card1 = [[UIView alloc] initWithFrame:CGRectMake(16, 80, w - 32, 100)];
+    card1.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0]; // Apple Secondary Grouped Dark
+    card1.layer.cornerRadius = 16.0;
+    card1.layer.borderWidth = 1.0;
+    card1.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
     card1.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card1];
 
-    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card1.bounds.size.width - 32, 22)];
-    l1.text = @"📝 Quản Lý Hàng Đợi Lời (Lyrics Queue)";
+    UILabel *l1 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card1.bounds.size.width - 32, 20)];
+    l1.text = @"Hàng Đợi Lời Bài Hát (Smart Lyrics)";
     l1.textColor = [UIColor whiteColor];
-    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    l1.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     [card1 addSubview:l1];
 
-    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card1.bounds.size.width - 190, 48)];
-    self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
-    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:12];
+    self.lyricsStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 38, card1.bounds.size.width - 195, 50)];
+    self.lyricsStatusLabel.textColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0]; // iOS Mint/Green
+    self.lyricsStatusLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightMedium];
     self.lyricsStatusLabel.numberOfLines = 2;
     [card1 addSubview:self.lyricsStatusLabel];
     [self refreshLyricsStatus];
 
-    // Nạp Mới Button
+    // Nạp Mới Button (Apple Slate Accent)
     UIButton *loadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 42, 85, 36);
-    [loadBtn setTitle:@"📝 Nạp Mới" forState:UIControlStateNormal];
-    [loadBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    loadBtn.backgroundColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
+    loadBtn.frame = CGRectMake(card1.bounds.size.width - 180, 46, 85, 34);
+    [loadBtn setTitle:@"Nạp Mới" forState:UIControlStateNormal];
+    [loadBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    loadBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]; // Apple System Blue
     loadBtn.layer.cornerRadius = 10.0;
-    loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    loadBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     loadBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [loadBtn addTarget:self action:@selector(openLyricsModal) forControlEvents:UIControlEventTouchUpInside];
     [card1 addSubview:loadBtn];
 
     // Xóa Hàng Đợi Button
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(card1.bounds.size.width - 88, 42, 76, 36);
-    [clearBtn setTitle:@"🗑️ Xóa" forState:UIControlStateNormal];
-    [clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
-    clearBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.1 alpha:0.8];
+    clearBtn.frame = CGRectMake(card1.bounds.size.width - 86, 46, 72, 34);
+    [clearBtn setTitle:@"Xóa" forState:UIControlStateNormal];
+    [clearBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.40 blue:0.40 alpha:1.0] forState:UIControlStateNormal];
+    clearBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
     clearBtn.layer.cornerRadius = 10.0;
-    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    clearBtn.layer.borderWidth = 1.0;
+    clearBtn.layer.borderColor = [UIColor colorWithRed:1.0 green:0.40 blue:0.40 alpha:0.2].CGColor;
+    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     clearBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [clearBtn addTarget:self action:@selector(clearQueueAction) forControlEvents:UIControlEventTouchUpInside];
     [card1 addSubview:clearBtn];
 
     // Card 2: Auto Save to Camera Roll
-    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 168, w - 32, 70)];
-    card2.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.22 alpha:1.0]; // #1F2238
-    card2.layer.cornerRadius = 14.0;
+    UIView *card2 = [[UIView alloc] initWithFrame:CGRectMake(16, 192, w - 32, 72)];
+    card2.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0];
+    card2.layer.cornerRadius = 16.0;
+    card2.layer.borderWidth = 1.0;
+    card2.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
     card2.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card2];
 
     UILabel *l2 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card2.bounds.size.width - 100, 20)];
-    l2.text = @"🖼️ Tự Động Lưu Ảnh Vào Camera Roll";
+    l2.text = @"Tự Động Lưu Ảnh Vào Photos";
     l2.textColor = [UIColor whiteColor];
-    l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     [card2 addSubview:l2];
 
     UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card2.bounds.size.width - 100, 20)];
-    l2Sub.text = @"Tự động lưu khung hình/ảnh xuất vào Cuộn Camera";
-    l2Sub.textColor = [UIColor lightGrayColor];
+    l2Sub.text = @"Tự động lưu khung hình PNG và ảnh chia sẻ vào Cuộn Camera";
+    l2Sub.textColor = [UIColor colorWithRed:0.58 green:0.62 blue:0.70 alpha:1.0];
     l2Sub.font = [UIFont systemFontOfSize:11];
     [card2 addSubview:l2Sub];
 
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 19, 51, 31)];
-    sw.onTintColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(card2.bounds.size.width - 66, 20, 51, 31)];
+    sw.onTintColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0]; // Apple Mint
     sw.on = AMIsAutoSaveEnabled();
     sw.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     [sw addTarget:self action:@selector(toggleAutoSave:) forControlEvents:UIControlEventValueChanged];
     [card2 addSubview:sw];
 
-    // Card 3: Pro & Effects Status
-    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 250, w - 32, 95)];
-    card3.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.22 alpha:1.0]; // #1F2238
-    card3.layer.cornerRadius = 14.0;
+    // Card 3: System Performance & Optimization Badges
+    UIView *card3 = [[UIView alloc] initWithFrame:CGRectMake(16, 276, w - 32, 115)];
+    card3.backgroundColor = [UIColor colorWithRed:0.12 green:0.13 blue:0.16 alpha:1.0];
+    card3.layer.cornerRadius = 16.0;
+    card3.layer.borderWidth = 1.0;
+    card3.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.07].CGColor;
     card3.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:card3];
 
-
-    UILabel *l3 = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, card3.bounds.size.width - 32, 22)];
-    l3.text = @"👑 Trạng Thái Hệ Thống";
+    UILabel *l3 = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, card3.bounds.size.width - 32, 20)];
+    l3.text = @"Động Cơ Hiệu Năng & Trạng Thái";
     l3.textColor = [UIColor whiteColor];
-    l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    l3.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     [card3 addSubview:l3];
 
-    UILabel *l3Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 32, card3.bounds.size.width - 32, 56)];
-    l3Sub.text = @"🟢 Full Premium Pro v6.2.56 Unlocked (4K, No Watermark)\n🟢 Tối ưu hóa FastStart Moov & Chất lượng Pro Cực Đại\n🟢 Tự động lưu video chất lượng cao vào Camera Roll\n🟢 Đã triệt tiêu 100% SDK quảng cáo & Trình theo dõi ngầm";
-    l3Sub.textColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
-    l3Sub.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightMedium];
-    l3Sub.numberOfLines = 4;
-    [card3 addSubview:l3Sub];
+    // 4 Badges layout inside Card 3
+    NSArray *badges = @[
+        @"✓ Mở Khóa Pro • No Watermark",
+        @"✓ ProMotion 120 FPS & Metal 3x",
+        @"✓ Anti-Throttling (Chống Tụt FPS)",
+        @"✓ Triệt Tiêu 100% Ad & Telemetry"
+    ];
+    CGFloat badgeW = (card3.bounds.size.width - 40) / 2.0;
+    for (int i = 0; i < 4; i++) {
+        CGFloat bx = 16 + (i % 2) * (badgeW + 8);
+        CGFloat by = 38 + (i / 2) * 34;
+        UIView *bView = [[UIView alloc] initWithFrame:CGRectMake(bx, by, badgeW, 28)];
+        bView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
+        bView.layer.cornerRadius = 8.0;
+        bView.layer.borderWidth = 1.0;
+        bView.layer.borderColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:0.25].CGColor;
+        
+        UILabel *bLbl = [[UILabel alloc] initWithFrame:bView.bounds];
+        bLbl.text = badges[i];
+        bLbl.textColor = [UIColor colorWithRed:0.20 green:0.80 blue:0.50 alpha:1.0];
+        bLbl.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+        bLbl.textAlignment = NSTextAlignmentCenter;
+        [bView addSubview:bLbl];
+        [card3 addSubview:bView];
+    }
 
-    // Close Button
+    // Close Button (Apple Native Subtle Style)
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(16, self.view.bounds.size.height - 56, w - 32, 44);
-    [closeBtn setTitle:@"Đóng Cài Đặt" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.16 blue:0.19 alpha:1.0]; // #262831
-    closeBtn.layer.cornerRadius = 12.0;
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    [closeBtn setTitle:@"Đóng" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor colorWithRed:0.75 green:0.80 blue:0.90 alpha:1.0] forState:UIControlStateNormal];
+    closeBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.07];
+    closeBtn.layer.cornerRadius = 14.0;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     closeBtn.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:closeBtn];
-
 }
 
 - (void)refreshLyricsStatus {
@@ -2090,19 +2125,31 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     self.parentWindow = window;
 
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    btn.frame = CGRectMake(16.0, window.bounds.size.height - 140.0, 48.0, 48.0);
-    btn.layer.cornerRadius = 24.0;
-    btn.backgroundColor = [UIColor colorWithRed:0.00 green:0.00 blue:0.00 alpha:0.95]; // #000000 OLED
-    btn.layer.borderWidth = 1.5;
-    btn.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.9].CGColor; // #00FFA8
-    btn.layer.shadowColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.6].CGColor; // #00FFA8
-
+    btn.frame = CGRectMake(16.0, window.bounds.size.height - 140.0, 46.0, 46.0);
+    btn.layer.cornerRadius = 23.0;
+    // Apple iOS 18 Midnight Slate Glass Surface
+    btn.backgroundColor = [UIColor colorWithRed:0.13 green:0.14 blue:0.18 alpha:0.92];
+    btn.layer.borderWidth = 1.0;
+    btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
+    btn.layer.shadowColor = [UIColor blackColor].CGColor;
     btn.layer.shadowOffset = CGSizeMake(0, 4);
-    btn.layer.shadowRadius = 8.0;
-    btn.layer.shadowOpacity = 0.8;
+    btn.layer.shadowRadius = 10.0;
+    btn.layer.shadowOpacity = 0.35;
 
-    [btn setTitle:@"⚙️" forState:UIControlStateNormal];
-    btn.titleLabel.font = [UIFont systemFontOfSize:22.0];
+    // SF Symbol with Slate Tint
+    UIImage *symbol = nil;
+    if (@available(iOS 13.0, *)) {
+        symbol = [UIImage systemImageNamed:@"slider.horizontal.3"];
+        if (!symbol) symbol = [UIImage systemImageNamed:@"gearshape.fill"];
+    }
+    if (symbol) {
+        [btn setImage:symbol forState:UIControlStateNormal];
+        btn.tintColor = [UIColor colorWithRed:0.80 green:0.85 blue:0.95 alpha:1.0]; // Slate Ice Blue
+    } else {
+        [btn setTitle:@"⚙️" forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:20.0];
+    }
+    
     [btn addTarget:self action:@selector(floatingButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
 
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -2143,13 +2190,20 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
         CGFloat snapX = (center.x < window.bounds.size.width / 2.0) ? minX : maxX;
-        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.4 options:UIViewAnimationOptionCurveEaseOut animations:^{
             view.center = CGPointMake(snapX, center.y);
         } completion:nil];
     }
 }
 
 - (void)floatingButtonTapped:(UIButton *)sender {
+    // Native Haptic Feedback
+    if (@available(iOS 10.0, *)) {
+        UIImpactFeedbackGenerator *haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [haptic prepare];
+        [haptic impactOccurred];
+    }
+
     UIWindow *window = self.parentWindow ?: [UIApplication sharedApplication].windows.firstObject;
     UIViewController *root = window.rootViewController;
     while (root.presentedViewController) {
