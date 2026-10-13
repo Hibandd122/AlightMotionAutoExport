@@ -1165,52 +1165,51 @@ static BOOL UMV_OptimizeMP4(NSString *filePath) {
     return ok;
 }
 
-static BOOL hasSavedRecentVideo = NO;
+static BOOL hasSavedRecentImage = NO;
 
-static void AMAutoSaveVideoAtPath(NSString *filePath) {
+static void AMAutoSaveImage(UIImage *image) {
+    if (!AMIsAutoSaveEnabled()) return;
+    if (!image) return;
+    if (hasSavedRecentImage) return;
+
+    hasSavedRecentImage = YES;
+    UIImageWriteToSavedPhotosAlbum(image, nil, NULL, NULL);
+    AMNotifyUser(@"Alight Motion", @"🖼️ Đã tự động lưu khung ảnh vào Cuộn Camera (Photos)!");
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        hasSavedRecentImage = NO;
+    });
+}
+
+static void AMAutoSaveImageAtPath(NSString *filePath) {
     if (!AMIsAutoSaveEnabled()) return;
     if (!filePath || filePath.length == 0) return;
-    if (hasSavedRecentVideo) return;
-
     if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) return;
 
-    // Apply UMV Engine FastStart optimization for MP4 files
-    NSString *ext = filePath.pathExtension.lowercaseString;
-    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"m4v"]) {
-        UMV_OptimizeMP4(filePath);
+    UIImage *img = [UIImage imageWithContentsOfFile:filePath];
+    if (img) {
+        AMAutoSaveImage(img);
     }
-
-    if (!UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(filePath)) {
-        return;
-    }
-
-    hasSavedRecentVideo = YES;
-    UISaveVideoAtPathToSavedPhotosAlbum(filePath, nil, NULL, NULL);
-    AMNotifyUser(@"UMV Engine v6.6.6 Pro", @"Video đã được tối ưu hóa FastStart Moov & lưu vào Camera Roll!");
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        hasSavedRecentVideo = NO;
-    });
 }
 
 static id (*orig_UIActivityViewController_initWithActivityItems)(id, SEL, NSArray *, NSArray *);
 
 static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd, NSArray *activityItems, NSArray *applicationActivities) {
-    if (activityItems) {
+    if (activityItems && AMIsAutoSaveEnabled()) {
         for (id item in activityItems) {
-            if ([item isKindOfClass:[NSURL class]]) {
+            if ([item isKindOfClass:[UIImage class]]) {
+                AMAutoSaveImage((UIImage *)item);
+            } else if ([item isKindOfClass:[NSURL class]]) {
                 NSURL *url = (NSURL *)item;
                 NSString *ext = url.pathExtension.lowercaseString;
-                if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"]) {
-                    UMV_OptimizeMP4(url.path);
-                    AMAutoSaveVideoAtPath(url.path);
+                if ([ext isEqualToString:@"png"] || [ext isEqualToString:@"jpg"] || [ext isEqualToString:@"jpeg"] || [ext isEqualToString:@"webp"] || [ext isEqualToString:@"heic"]) {
+                    AMAutoSaveImageAtPath(url.path);
                 }
             } else if ([item isKindOfClass:[NSString class]]) {
                 NSString *str = (NSString *)item;
                 NSString *ext = str.pathExtension.lowercaseString;
-                if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"]) {
-                    UMV_OptimizeMP4(str);
-                    AMAutoSaveVideoAtPath(str);
+                if ([ext isEqualToString:@"png"] || [ext isEqualToString:@"jpg"] || [ext isEqualToString:@"jpeg"] || [ext isEqualToString:@"webp"] || [ext isEqualToString:@"heic"]) {
+                    AMAutoSaveImageAtPath(str);
                 }
             }
         }
@@ -1635,13 +1634,13 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [self.view addSubview:card2];
 
     UILabel *l2 = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, card2.bounds.size.width - 100, 20)];
-    l2.text = @"🎬 Tự Động Lưu Vào Cuộn Camera";
+    l2.text = @"🖼️ Tự Động Lưu Ảnh Vào Camera Roll";
     l2.textColor = [UIColor whiteColor];
     l2.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
     [card2 addSubview:l2];
 
     UILabel *l2Sub = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, card2.bounds.size.width - 100, 20)];
-    l2Sub.text = @"Tự động lưu video sau khi render xong";
+    l2Sub.text = @"Tự động lưu khung hình/ảnh xuất vào Cuộn Camera";
     l2Sub.textColor = [UIColor lightGrayColor];
     l2Sub.font = [UIFont systemFontOfSize:11];
     [card2 addSubview:l2Sub];
@@ -2196,20 +2195,27 @@ static void hook_ExportPreviewVC_viewDidAppear(UIViewController *self, SEL _cmd,
     if (AMIsAutoSaveEnabled()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             @try {
-                UIButton *btn = (UIButton *)getObjcIvar(self, "storeButton");
-                if (!btn) {
-                    @try { btn = [self valueForKey:@"storeButton"]; } @catch (NSException *e) {}
-                }
-                if ([self respondsToSelector:@selector(onTapSave:)]) {
-                    ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(onTapSave:), btn ?: self);
-                    AMNotifyUser(@"UMV Auto-Save", @"🎬 Tự động lưu video chất lượng cao vào Cuộn Camera (Photos)!");
-                } else if (btn && [btn isKindOfClass:[UIButton class]]) {
-                    [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
-                    [btn sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
-                    AMNotifyUser(@"UMV Auto-Save", @"🎬 Tự động lưu video chất lượng cao vào Cuộn Camera (Photos)!");
+                // Only auto-save if this preview is for an IMAGE export (no videoControlView or hidden)
+                UIView *videoCtrl = nil;
+                @try { videoCtrl = [self valueForKey:@"videoControlView"]; } @catch (NSException *e) {}
+                BOOL isVideo = (videoCtrl && !videoCtrl.hidden);
+
+                if (!isVideo) {
+                    UIButton *btn = (UIButton *)getObjcIvar(self, "storeButton");
+                    if (!btn) {
+                        @try { btn = [self valueForKey:@"storeButton"]; } @catch (NSException *e) {}
+                    }
+                    if ([self respondsToSelector:@selector(onTapSave:)]) {
+                        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(onTapSave:), btn ?: self);
+                        AMNotifyUser(@"Alight Motion", @"🖼️ Đã tự động lưu khung ảnh vào Cuộn Camera (Photos)!");
+                    } else if (btn && [btn isKindOfClass:[UIButton class]]) {
+                        [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+                        [btn sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
+                        AMNotifyUser(@"Alight Motion", @"🖼️ Đã tự động lưu khung ảnh vào Cuộn Camera (Photos)!");
+                    }
                 }
             } @catch (NSException *e) {
-                NSLog(@"[AlightMotionUltra] Auto-save error: %@", e);
+                NSLog(@"[AlightMotionUltra] Auto-save image error: %@", e);
             }
         });
     }
@@ -2219,20 +2225,6 @@ static void (*orig_ExportVC_viewDidAppear)(UIViewController *, SEL, BOOL);
 static void hook_ExportVC_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
     if (orig_ExportVC_viewDidAppear) {
         orig_ExportVC_viewDidAppear(self, _cmd, animated);
-    }
-
-    if (AMIsAutoSaveEnabled()) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            @try {
-                if ([self respondsToSelector:@selector(storeButton)]) {
-                    UIButton *button = [self valueForKey:@"storeButton"];
-                    if ([button isKindOfClass:[UIButton class]]) {
-                        [button sendActionsForControlEvents:UIControlEventTouchUpInside];
-                        [button sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
-                    }
-                }
-            } @catch (NSException *e) {}
-        });
     }
 }
 
