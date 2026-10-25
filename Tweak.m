@@ -115,14 +115,39 @@ static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultN
             [defaultName isEqualToString:@"activeExternalSubscriptionsOverride"]) {
             return @[@"alightcreative.motion.1y_t80"];
         }
-        if ([defaultName isEqualToString:@"Forced Subscription status"]) return @"active";
+        if ([defaultName isEqualToString:@"Forced Subscription status"] ||
+            [defaultName isEqualToString:@"subscription_status"] ||
+            [defaultName isEqualToString:@"subscriptionStatus"]) {
+            return @"active";
+        }
+        if ([defaultName isEqualToString:@"AM_ActiveProductID"] ||
+            [defaultName isEqualToString:@"activeProductID"] ||
+            [defaultName isEqualToString:@"productId"]) {
+            return @"alightcreative.motion.1y_t80";
+        }
+        if ([defaultName isEqualToString:@"active_subscriptions"] ||
+            [defaultName isEqualToString:@"activeSubscriptions"]) {
+            return @{
+                @"alightcreative.motion.1y_t80": @{
+                    @"product_id": @"alightcreative.motion.1y_t80",
+                    @"status": @"active",
+                    @"expires_date_ms": @"4102444800000",
+                    @"is_trial_period": @NO,
+                    @"auto_renew_status": @YES
+                }
+            };
+        }
         if ([defaultName isEqualToString:@"UnlockAllProFeatures"] ||
             [defaultName isEqualToString:@"isSubscribedToUltra"] ||
             [defaultName isEqualToString:@"isPremium"] ||
             [defaultName isEqualToString:@"hasMembership"] ||
             [defaultName isEqualToString:@"benefit_remove_watermark"] ||
             [defaultName isEqualToString:@"remove_watermark"] ||
-            [defaultName isEqualToString:@"has_active_subscriptions"]) {
+            [defaultName isEqualToString:@"has_active_subscriptions"] ||
+            [defaultName isEqualToString:@"isSubscribed"] ||
+            [defaultName isEqualToString:@"is_subscribed"] ||
+            [defaultName isEqualToString:@"isPremiumUser"] ||
+            [defaultName isEqualToString:@"watermark_removed"]) {
             return @YES;
         }
         if ([defaultName isEqualToString:@"isFreeUser"]) return @NO;
@@ -139,7 +164,11 @@ static BOOL hook_NSUserDefaults_boolForKey(id self, SEL _cmd, NSString *defaultN
             [defaultName isEqualToString:@"hasMembership"] ||
             [defaultName isEqualToString:@"benefit_remove_watermark"] ||
             [defaultName isEqualToString:@"remove_watermark"] ||
-            [defaultName isEqualToString:@"has_active_subscriptions"]) {
+            [defaultName isEqualToString:@"has_active_subscriptions"] ||
+            [defaultName isEqualToString:@"isSubscribed"] ||
+            [defaultName isEqualToString:@"is_subscribed"] ||
+            [defaultName isEqualToString:@"isPremiumUser"] ||
+            [defaultName isEqualToString:@"watermark_removed"]) {
             return YES;
         }
         if ([defaultName isEqualToString:@"isFreeUser"]) return NO;
@@ -157,6 +186,10 @@ static void AMApplyProSettings(void) {
     [ud setObject:@YES forKey:@"benefit_remove_watermark"];
     [ud setObject:@YES forKey:@"remove_watermark"];
     [ud setObject:@YES forKey:@"has_active_subscriptions"];
+    [ud setObject:@YES forKey:@"isSubscribed"];
+    [ud setObject:@YES forKey:@"is_subscribed"];
+    [ud setObject:@YES forKey:@"isPremiumUser"];
+    [ud setObject:@YES forKey:@"watermark_removed"];
     [ud setObject:@"cloudSubscriber" forKey:@"forced_subscription_tier_key"];
     [ud setObject:@"active" forKey:@"Forced Subscription status"];
     [ud setObject:@"alightcreative.motion.1y_t80" forKey:@"AM_ActiveProductID"];
@@ -200,6 +233,7 @@ static void AMApplyProSettings(void) {
         }
     });
 }
+
 
 #pragma mark - =========================================================
 #pragma mark 2.5. Ad-Networks & Telemetry Neutralizer Engine (Zero Lag & Pure Speed)
@@ -387,46 +421,6 @@ static int64_t hook_ProjectPackage_freeUserMaxDownloadSize(id self, SEL _cmd) {
     return 53687091200LL; // 50 GB
 }
 
-static void (*orig_UIViewController_presentViewController_animated_completion)(UIViewController *, SEL, UIViewController *, BOOL, void (^)(void));
-
-static void hook_UIViewController_presentViewController_animated_completion(UIViewController *self, SEL _cmd, UIViewController *vcToPresent, BOOL animated, void (^completion)(void)) {
-    if ([vcToPresent isKindOfClass:[UIAlertController class]]) {
-        UIAlertController *alert = (UIAlertController *)vcToPresent;
-        NSString *title = alert.title ?: @"";
-        NSString *message = alert.message ?: @"";
-        
-        BOOL shouldBlock = NO;
-        if ([title containsString:@"Cần đăng nhập"] ||
-            [title containsString:@"đăng nhập"] ||
-            [title containsString:@"Sign In"] ||
-            [title containsString:@"Log In"] ||
-            [title containsString:@"Không khớp"] ||
-            [title containsString:@"Mismatch"] ||
-            [title containsString:@"Thành viên"] ||
-            [title containsString:@"Membership"] ||
-            [message containsString:@"thẻ thành viên"] ||
-            [message containsString:@"thành viên của bạn"] ||
-            [message containsString:@"đăng nhập bằng tài khoản"] ||
-            [message containsString:@"linked to your membership"] ||
-            [message containsString:@"linked with your membership"] ||
-            [message containsString:@"sign_in_required"]) {
-            shouldBlock = YES;
-        }
-        
-        if (shouldBlock) {
-            NSLog(@"[AlightMotionUltra] Successfully suppressed membership login alert: [%@] - [%@]", title, message);
-            if (completion) {
-                dispatch_async(dispatch_get_main_queue(), completion);
-            }
-            return;
-        }
-    }
-    
-    if (orig_UIViewController_presentViewController_animated_completion) {
-        orig_UIViewController_presentViewController_animated_completion(self, _cmd, vcToPresent, animated, completion);
-    }
-}
-
 static void AMUnlockProjectPackageLimit(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -437,7 +431,7 @@ static void AMUnlockProjectPackageLimit(void) {
         [ud setObject:@YES forKey:@"benefit_project_package_sharing"];
         [ud synchronize];
 
-        // 1. Hook any classes responding to freeUserMaxDownloadSize
+        // Hook any classes responding to freeUserMaxDownloadSize
         const char *targetClasses[] = {
             "_TtC12AlightMotion15ProjectPackager",
             "_TtC12AlightMotion15PackageImporter",
@@ -463,40 +457,6 @@ static void AMUnlockProjectPackageLimit(void) {
             Method mClass = class_getClassMethod(cls, selClass);
             if (mClass) {
                 method_setImplementation(mClass, (IMP)hook_ProjectPackage_freeUserMaxDownloadSize);
-            }
-        }
-
-        // 2. Swizzle UIViewController presentViewController:animated:completion: to intercept any login popups
-        Method mPresent = class_getInstanceMethod([UIViewController class], @selector(presentViewController:animated:completion:));
-        if (mPresent) {
-            orig_UIViewController_presentViewController_animated_completion = (void *)method_getImplementation(mPresent);
-            method_setImplementation(mPresent, (IMP)hook_UIViewController_presentViewController_animated_completion);
-        }
-
-        // 3. Apply native ARM64 memory patches to bypass all membership & account checks permanently
-        uintptr_t slide = (uintptr_t)_dyld_get_image_vmaddr_slide(0);
-        mach_port_t self_task = mach_task_self();
-        struct {
-            uintptr_t offset;
-            uint32_t opcode;
-        } patches[] = {
-            { 0x269764, 0x14000424 }, // Gatekeeper bypass -> B 0x10026a7f4
-            { 0x269f44, 0x1400022c }, // Size check bypass -> B 0x10026a7f4
-            { 0x269f64, 0x14000224 }, // Size fallback entry -> B 0x10026a7f4
-            { 0x269b60, 0x14000325 }, // Wrong account branch -> B 0x10026a7f4
-            { 0x26a3b8, 0x1400010f }, // Sign in required entry -> B 0x10026a7f4
-            { 0xb35eec, 0x1400004d }, // Package verify check 2 -> B 0x100b36020
-        };
-        for (int i = 0; i < 6; i++) {
-            uintptr_t targetAddr = slide + 0x100000000 + patches[i].offset;
-            vm_address_t page_start = (vm_address_t)(targetAddr & ~0xfff);
-            kern_return_t kr = vm_protect(self_task, page_start, 0x2000, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-            if (kr == KERN_SUCCESS) {
-                *(uint32_t *)targetAddr = patches[i].opcode;
-                vm_protect(self_task, page_start, 0x2000, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
-                NSLog(@"[AlightMotionUltra] Successfully applied native ARM64 memory patch at 0x%lx (offset 0x%lx) -> 0x%08x", targetAddr, patches[i].offset, patches[i].opcode);
-            } else {
-                NSLog(@"[AlightMotionUltra] vm_protect failed at offset 0x%lx: %d", patches[i].offset, kr);
             }
         }
     });
@@ -1441,15 +1401,61 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 @end
 
-#pragma mark - Batch Lyrics Inserter Modal View Controller (With Smart LRC Cleaner)
+#pragma mark - =========================================================
+#pragma mark UI Helpers: Spring Micro-Animation & Apple SF Symbols
+#pragma mark - =========================================================
+
+static void AMApplySpringTouchAnimation(UIButton *btn) {
+    if (!btn) return;
+    [btn addTarget:btn action:@selector(_am_onTouchDown:) forControlEvents:UIControlEventTouchDown];
+    [btn addTarget:btn action:@selector(_am_onTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+}
+
+@interface UIButton (AMSpringAnimation)
+- (void)_am_onTouchDown:(UIButton *)sender;
+- (void)_am_onTouchUp:(UIButton *)sender;
+@end
+
+@implementation UIButton (AMSpringAnimation)
+- (void)_am_onTouchDown:(UIButton *)sender {
+    [UIView animateWithDuration:0.12 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+        sender.transform = CGAffineTransformMakeScale(0.92, 0.92);
+        sender.alpha = 0.82;
+    } completion:nil];
+}
+
+- (void)_am_onTouchUp:(UIButton *)sender {
+    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.55 initialSpringVelocity:3.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        sender.transform = CGAffineTransformIdentity;
+        sender.alpha = 1.0;
+    } completion:nil];
+}
+@end
+
+static UIImage *AMGetSystemIcon(NSString *symbolName, NSString *fallbackText, CGFloat pointSize, UIFontWeight weight) {
+    if (@available(iOS 13.0, *)) {
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:pointSize weight:weight];
+        UIImage *img = [UIImage systemImageNamed:symbolName withConfiguration:config];
+        if (img) return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    }
+    return nil;
+}
+
+#pragma mark - =========================================================
+#pragma mark Batch Lyrics Modal (Apple Modern Sheet UI + Glassmorphism)
+#pragma mark - =========================================================
 
 @interface AMBatchLyricsViewController : UIViewController <UITextViewDelegate>
+@property (nonatomic, strong) UIView *sheetContainer;
 @property (nonatomic, strong) UITextView *textView;
-@property (nonatomic, strong) UILabel *lineCountLabel;
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *subtitleLabel;
+@property (nonatomic, strong) UILabel *statsPillLabel;
 @property (nonatomic, strong) UIButton *pasteButton;
 @property (nonatomic, strong) UIButton *clearQueueButton;
 @property (nonatomic, strong) UIButton *applyButton;
 @property (nonatomic, strong) UIButton *closeButton;
+@property (nonatomic, strong) UILabel *placeholderLabel;
 @property (nonatomic, copy) void (^onLyricsLoaded)(void);
 @end
 
@@ -1457,21 +1463,20 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor blackColor]; // #000000 Pure OLED Black
+    self.view.backgroundColor = [UIColor colorWithRed:0.04 green:0.05 blue:0.07 alpha:1.0]; // #0A0D12 Deep OLED
 
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
     tap.cancelsTouchesInView = NO;
     [self.view addGestureRecognizer:tap];
 
-    [self setupHeader];
-    [self setupTextView];
-    [self setupButtons];
+    [self setupCardUI];
 
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
     if (mgr.lyricsLines.count > 0) {
         self.textView.text = [mgr.lyricsLines componentsJoinedByString:@"\n"];
-        [self updateLineCount];
+        self.placeholderLabel.hidden = YES;
     }
+    [self updateLineCount];
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
@@ -1481,100 +1486,132 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-- (void)setupHeader {
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, self.view.bounds.size.width - 40, 28)];
-    titleLabel.text = @"📝 Nạp Lời Bài Hát (Lyrics)";
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
-    titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:titleLabel];
+- (void)setupCardUI {
+    CGFloat viewW = self.view.bounds.size.width;
+    CGFloat viewH = self.view.bounds.size.height;
 
-    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 44, self.view.bounds.size.width - 40, 32)];
-    subtitleLabel.text = @"Dán lời bài hát (mỗi dòng 1 câu - tự động lọc sạch timestamp LRC). Lưu hàng đợi hoặc xóa bất cứ lúc nào.";
-    subtitleLabel.textColor = [UIColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0]; // #D9D9D9
-    subtitleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    subtitleLabel.numberOfLines = 2;
-    subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:subtitleLabel];
-}
+    // 1. Drag / Pull Indicator Pill
+    UIView *grabber = [[UIView alloc] initWithFrame:CGRectMake((viewW - 40.0) / 2.0, 10.0, 40.0, 5.0)];
+    grabber.backgroundColor = [UIColor colorWithWhite:0.32 alpha:1.0];
+    grabber.layer.cornerRadius = 2.5;
+    grabber.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
+    [self.view addSubview:grabber];
 
-- (void)setupTextView {
-    CGFloat yPos = 82;
-    CGFloat bottomMargin = 110;
-    CGFloat h = self.view.bounds.size.height - yPos - bottomMargin;
-    if (h < 150) h = 150;
+    // 2. Close Button Top-Right [✕]
+    self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.closeButton.frame = CGRectMake(viewW - 46.0, 16.0, 32.0, 32.0);
+    UIImage *closeIcon = AMGetSystemIcon(@"xmark.circle.fill", @"✕", 20.0, UIFontWeightBold);
+    if (closeIcon) {
+        [self.closeButton setImage:closeIcon forState:UIControlStateNormal];
+        self.closeButton.tintColor = [UIColor colorWithWhite:0.65 alpha:1.0];
+    } else {
+        [self.closeButton setTitle:@"✕" forState:UIControlStateNormal];
+        [self.closeButton setTitleColor:[UIColor colorWithWhite:0.65 alpha:1.0] forState:UIControlStateNormal];
+        self.closeButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
+    }
+    [self.closeButton addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(self.closeButton);
+    self.closeButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.view addSubview:self.closeButton];
 
-    self.textView = [[UITextView alloc] initWithFrame:CGRectMake(16, yPos, self.view.bounds.size.width - 32, h)];
-    self.textView.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.13 alpha:1.0]; // #141620
+    // 3. Header Titles
+    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 26.0, viewW - 75.0, 26.0)];
+    self.titleLabel.text = @"📝 Quản Lý Lời Bài Hát";
+    self.titleLabel.textColor = [UIColor whiteColor];
+    self.titleLabel.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightBold];
+    self.titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:self.titleLabel];
+
+    self.subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 52.0, viewW - 40.0, 18.0)];
+    self.subtitleLabel.text = @"Tự động nhận diện câu & làm sạch timestamp LRC.";
+    self.subtitleLabel.textColor = [UIColor colorWithRed:0.62 green:0.65 blue:0.75 alpha:1.0];
+    self.subtitleLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+    self.subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:self.subtitleLabel];
+
+    // 4. Stats Pill Label (Mini Badge)
+    self.statsPillLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 76.0, viewW - 40.0, 24.0)];
+    self.statsPillLabel.textColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
+    self.statsPillLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    self.statsPillLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:self.statsPillLabel];
+
+    // 5. Input TextView with Glass Frame
+    CGFloat textY = 108.0;
+    CGFloat bottomMargin = 120.0;
+    CGFloat textH = viewH - textY - bottomMargin;
+    if (textH < 150.0) textH = 150.0;
+
+    self.textView = [[UITextView alloc] initWithFrame:CGRectMake(16.0, textY, viewW - 32.0, textH)];
+    self.textView.backgroundColor = [UIColor colorWithRed:0.08 green:0.10 blue:0.15 alpha:0.95]; // #141A26
     self.textView.textColor = [UIColor whiteColor];
-    self.textView.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    self.textView.layer.cornerRadius = 12.0;
-    self.textView.layer.borderWidth = 1.2;
-    self.textView.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.6].CGColor; // #00FFA8
+    self.textView.font = [UIFont systemFontOfSize:14.5 weight:UIFontWeightMedium];
+    self.textView.layer.cornerRadius = 14.0;
+    self.textView.layer.borderWidth = 1.0;
+    self.textView.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.35].CGColor;
+    self.textView.textContainerInset = UIEdgeInsetsMake(12.0, 10.0, 12.0, 10.0);
     self.textView.delegate = self;
+    self.textView.keyboardAppearance = UIKeyboardAppearanceDark;
     self.textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.textView];
 
-    self.lineCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, yPos + h + 6, self.view.bounds.size.width - 40, 20)];
-    self.lineCountLabel.text = @"📊 Số dòng: 0 câu hát đã nhập";
-    self.lineCountLabel.textColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
-    self.lineCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    self.lineCountLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-    [self.view addSubview:self.lineCountLabel];
-}
+    // Placeholder inside textview
+    self.placeholderLabel = [[UILabel alloc] initWithFrame:CGRectMake(16.0, 12.0, self.textView.bounds.size.width - 32.0, 60.0)];
+    self.placeholderLabel.text = @"Dán lời bài hát vào đây (mỗi dòng 1 câu)...\nVí dụ:\n[00:12.30] Câu hát thứ nhất\n[00:15.80] Câu hát thứ hai";
+    self.placeholderLabel.textColor = [UIColor colorWithWhite:0.42 alpha:1.0];
+    self.placeholderLabel.font = [UIFont systemFontOfSize:13.5 weight:UIFontWeightRegular];
+    self.placeholderLabel.numberOfLines = 4;
+    self.placeholderLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.textView addSubview:self.placeholderLabel];
 
-- (void)setupButtons {
-    CGFloat bottomY = self.view.bounds.size.height - 54;
-    CGFloat width = self.view.bounds.size.width;
+    // 6. Bottom Floating Action Dock
+    CGFloat btnY = viewH - 62.0;
+    CGFloat gap = 10.0;
 
-    // Paste Button
+    // Paste Button [📋 Dán]
     self.pasteButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.pasteButton.frame = CGRectMake(16, bottomY, 64, 42);
+    self.pasteButton.frame = CGRectMake(16.0, btnY, 82.0, 44.0);
     [self.pasteButton setTitle:@"📋 Dán" forState:UIControlStateNormal];
     [self.pasteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.pasteButton.backgroundColor = [UIColor colorWithRed:0.15 green:0.16 blue:0.19 alpha:1.0]; // #262831
-    self.pasteButton.layer.cornerRadius = 10.0;
-
-    self.pasteButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    self.pasteButton.titleLabel.font = [UIFont systemFontOfSize:13.5 weight:UIFontWeightSemibold];
+    self.pasteButton.backgroundColor = [UIColor colorWithRed:0.15 green:0.18 blue:0.25 alpha:1.0];
+    self.pasteButton.layer.cornerRadius = 12.0;
+    self.pasteButton.layer.borderWidth = 0.8;
+    self.pasteButton.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:1.0].CGColor;
     [self.pasteButton addTarget:self action:@selector(pasteFromClipboard) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(self.pasteButton);
     self.pasteButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.pasteButton];
 
-    // Clear Queue Button
+    // Clear Button [🗑️ Xóa]
     self.clearQueueButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.clearQueueButton.frame = CGRectMake(86, bottomY, 78, 42);
-    [self.clearQueueButton setTitle:@"🗑️ Xóa Hết" forState:UIControlStateNormal];
-    [self.clearQueueButton setTitleColor:[UIColor colorWithRed:1.0 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
-    self.clearQueueButton.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.1 alpha:0.8];
-    self.clearQueueButton.layer.cornerRadius = 10.0;
-    self.clearQueueButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    self.clearQueueButton.frame = CGRectMake(16.0 + 82.0 + gap, btnY, 78.0, 44.0);
+    [self.clearQueueButton setTitle:@"🗑️ Xóa" forState:UIControlStateNormal];
+    [self.clearQueueButton setTitleColor:[UIColor colorWithRed:1.00 green:0.45 blue:0.45 alpha:1.0] forState:UIControlStateNormal];
+    self.clearQueueButton.titleLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightSemibold];
+    self.clearQueueButton.backgroundColor = [UIColor colorWithRed:0.28 green:0.10 blue:0.12 alpha:0.85];
+    self.clearQueueButton.layer.cornerRadius = 12.0;
+    self.clearQueueButton.layer.borderWidth = 0.8;
+    self.clearQueueButton.layer.borderColor = [UIColor colorWithRed:1.00 green:0.40 blue:0.40 alpha:0.3].CGColor;
     [self.clearQueueButton addTarget:self action:@selector(clearQueue) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(self.clearQueueButton);
     self.clearQueueButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleRightMargin;
     [self.view addSubview:self.clearQueueButton];
 
-    // Save Queue Button
-    CGFloat applyX = 170;
-    CGFloat applyW = width - applyX - 60;
+    // Save & Apply Button [⚡ Lưu Hàng Đợi]
+    CGFloat applyX = 16.0 + 82.0 + gap + 78.0 + gap;
+    CGFloat applyW = viewW - applyX - 16.0;
     self.applyButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.applyButton.frame = CGRectMake(applyX, bottomY, applyW, 42);
-    [self.applyButton setTitle:@"⚡ Lưu Hàng Đợi Mới" forState:UIControlStateNormal];
+    self.applyButton.frame = CGRectMake(applyX, btnY, applyW, 44.0);
+    [self.applyButton setTitle:@"⚡ Lưu & Sử Dụng" forState:UIControlStateNormal];
     [self.applyButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    self.applyButton.titleLabel.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightBold];
     self.applyButton.backgroundColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
-    self.applyButton.layer.cornerRadius = 10.0;
-
-    self.applyButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    self.applyButton.layer.cornerRadius = 12.0;
     [self.applyButton addTarget:self action:@selector(applyLyricsToQueue) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(self.applyButton);
     self.applyButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:self.applyButton];
-
-    // Close Button
-    self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.closeButton.frame = CGRectMake(width - 54, bottomY, 44, 42);
-    [self.closeButton setTitle:@"Đóng" forState:UIControlStateNormal];
-    [self.closeButton setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
-    [self.closeButton addTarget:self action:@selector(dismissModal) forControlEvents:UIControlEventTouchUpInside];
-    self.closeButton.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleLeftMargin;
-    [self.view addSubview:self.closeButton];
 }
 
 - (void)dismissKeyboard {
@@ -1583,6 +1620,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)clearQueue {
     self.textView.text = @"";
+    self.placeholderLabel.hidden = NO;
     [self updateLineCount];
     [[AMLyricsQueueManager sharedManager] clearLyrics];
     if (self.onLyricsLoaded) {
@@ -1598,8 +1636,8 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     [UIView animateWithDuration:duration animations:^{
         CGRect frame = self.textView.frame;
-        frame.size.height = self.view.bounds.size.height - 82 - keyboardHeight - 10;
-        if (frame.size.height < 100) frame.size.height = 100;
+        frame.size.height = self.view.bounds.size.height - 108.0 - keyboardHeight - 10.0;
+        if (frame.size.height < 100.0) frame.size.height = 100.0;
         self.textView.frame = frame;
     }];
 }
@@ -1610,25 +1648,33 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
     [UIView animateWithDuration:duration animations:^{
         CGRect frame = self.textView.frame;
-        frame.size.height = self.view.bounds.size.height - 82 - 110;
+        frame.size.height = self.view.bounds.size.height - 108.0 - 120.0;
         self.textView.frame = frame;
     }];
 }
 
 - (void)textViewDidChange:(UITextView *)textView {
+    self.placeholderLabel.hidden = (textView.text.length > 0);
     [self updateLineCount];
 }
 
 - (void)updateLineCount {
     NSArray *lines = [self extractValidLines:self.textView.text];
-    self.lineCountLabel.text = [NSString stringWithFormat:@"📊 Số dòng: %lu câu hát đã nhập", (unsigned long)lines.count];
+    NSUInteger totalWords = 0;
+    for (NSString *s in lines) {
+        NSArray *words = [s componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        for (NSString *w in words) {
+            if (w.length > 0) totalWords++;
+        }
+    }
+    self.statsPillLabel.text = [NSString stringWithFormat:@"📊 %lu câu hát • %lu từ • Sẵn sàng nạp", (unsigned long)lines.count, (unsigned long)totalWords];
 }
 
 - (NSArray<NSString *> *)extractValidLines:(NSString *)rawText {
     if (!rawText || rawText.length == 0) return @[];
     NSArray *all = [rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
     NSMutableArray *valid = [NSMutableArray array];
-    
+
     static NSRegularExpression *lrcRegex = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -1654,6 +1700,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     UIPasteboard *pb = [UIPasteboard generalPasteboard];
     if (pb.string && pb.string.length > 0) {
         self.textView.text = pb.string;
+        self.placeholderLabel.hidden = YES;
         [self updateLineCount];
     }
 }
@@ -1668,7 +1715,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     NSArray<NSString *> *lines = [self extractValidLines:self.textView.text];
     if (lines.count == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Thông báo"
-                                                                       message:@"Vui lòng dán lời bài hát (ít nhất 1 câu) trước khi lưu."
+                                                                       message:@"Vui lòng nhập hoặc dán ít nhất 1 câu hát trước khi lưu."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
@@ -1676,22 +1723,22 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     }
 
     [[AMLyricsQueueManager sharedManager] loadLyrics:lines];
-
     if (self.onLyricsLoaded) {
         self.onLyricsLoaded();
     }
-
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
 
 
-
-#pragma mark - Sleek Glassmorphic Minimal Lyrics Accessory Bar (Rock-Solid Pixel-Perfect Layout)
+#pragma mark - =========================================================
+#pragma mark Minimal Lyrics Bar (Frosted Glass Capsule + SF Symbols)
+#pragma mark - =========================================================
 
 @interface AMMinimalLyricsBar : UIView
 @property (nonatomic, weak) UIViewController *targetVC;
+@property (nonatomic, strong) UIVisualEffectView *blurView;
 @property (nonatomic, strong) UIView *capsule;
 @property (nonatomic, strong) UIButton *prevBtn;
 @property (nonatomic, strong) UIButton *nextBtn;
@@ -1706,75 +1753,116 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 + (instancetype)barForViewController:(UIViewController *)vc {
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 42.0)];
+    AMMinimalLyricsBar *bar = [[self alloc] initWithFrame:CGRectMake(0, 0, screenW, 44.0)];
     bar.targetVC = vc;
     bar.backgroundColor = [UIColor clearColor];
 
-    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 36.0)];
-    capsule.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.13 alpha:0.96]; // #141620
-    capsule.layer.cornerRadius = 18.0;
+    // 1. Frosted Glass Capsule Container
+    UIView *capsule = [[UIView alloc] initWithFrame:CGRectMake(8.0, 3.0, screenW - 16.0, 38.0)];
+    capsule.backgroundColor = [UIColor colorWithRed:0.06 green:0.08 blue:0.12 alpha:0.92];
+    capsule.layer.cornerRadius = 19.0;
     capsule.layer.borderWidth = 1.0;
-    capsule.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.4].CGColor; // #00FFA8
+    capsule.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.35].CGColor; // #00FFA8
     capsule.clipsToBounds = YES;
     [bar addSubview:capsule];
     bar.capsule = capsule;
 
-    // 1. Prev Button [‹]
+    // Blur Background
+    UIBlurEffect *blurEffect = nil;
+    if (@available(iOS 13.0, *)) {
+        blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+    } else {
+        blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    }
+    UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+    blur.frame = capsule.bounds;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [capsule addSubview:blur];
+    bar.blurView = blur;
+
+    // 2. Prev Button [‹ / chevron.left]
     UIButton *prev = [UIButton buttonWithType:UIButtonTypeSystem];
-    [prev setTitle:@"‹" forState:UIControlStateNormal];
-    [prev setTitleColor:[UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0] forState:UIControlStateNormal]; // #00FFA8
-    prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    prev.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.8];
-    prev.layer.cornerRadius = 14.0;
+    UIImage *prevImg = AMGetSystemIcon(@"chevron.left", @"‹", 15.0, UIFontWeightBold);
+    if (prevImg) {
+        [prev setImage:prevImg forState:UIControlStateNormal];
+        prev.tintColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0];
+    } else {
+        [prev setTitle:@"‹" forState:UIControlStateNormal];
+        [prev setTitleColor:[UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0] forState:UIControlStateNormal];
+        prev.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    }
+    prev.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.8];
+    prev.layer.cornerRadius = 15.0;
     [prev addTarget:bar action:@selector(prevTapped) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(prev);
     [capsule addSubview:prev];
     bar.prevBtn = prev;
 
-    // 2. Next Button [›]
+    // 3. Next Button [› / chevron.right]
     UIButton *next = [UIButton buttonWithType:UIButtonTypeSystem];
-    [next setTitle:@"›" forState:UIControlStateNormal];
-    [next setTitleColor:[UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0] forState:UIControlStateNormal]; // #00FFA8
-    next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    next.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.8];
-    next.layer.cornerRadius = 14.0;
+    UIImage *nextImg = AMGetSystemIcon(@"chevron.right", @"›", 15.0, UIFontWeightBold);
+    if (nextImg) {
+        [next setImage:nextImg forState:UIControlStateNormal];
+        next.tintColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0];
+    } else {
+        [next setTitle:@"›" forState:UIControlStateNormal];
+        [next setTitleColor:[UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0] forState:UIControlStateNormal];
+        next.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    }
+    next.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.8];
+    next.layer.cornerRadius = 15.0;
     [next addTarget:bar action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(next);
     [capsule addSubview:next];
     bar.nextBtn = next;
 
-    // 3. Close Button [✕]
+    // 4. Close Button [✕ / keyboard.chevron.compact.down]
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    [close setTitle:@"✕" forState:UIControlStateNormal];
-    [close setTitleColor:[UIColor colorWithRed:0.85 green:0.85 blue:0.85 alpha:1.0] forState:UIControlStateNormal]; // #D9D9D9
-    close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-
-    close.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.8];
-    close.layer.cornerRadius = 14.0;
+    UIImage *closeImg = AMGetSystemIcon(@"keyboard.chevron.compact.down", @"✕", 15.0, UIFontWeightSemibold);
+    if (closeImg) {
+        [close setImage:closeImg forState:UIControlStateNormal];
+        close.tintColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+    } else {
+        [close setTitle:@"✕" forState:UIControlStateNormal];
+        [close setTitleColor:[UIColor colorWithWhite:0.85 alpha:1.0] forState:UIControlStateNormal];
+        close.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    }
+    close.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.8];
+    close.layer.cornerRadius = 15.0;
     [close addTarget:bar action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(close);
     [capsule addSubview:close];
     bar.closeBtn = close;
 
-    // 4. Menu Button [📋] (Nạp Lời / Chọn Câu / Xóa)
+    // 5. Menu Button [slider.horizontal.3 / 📋]
     UIButton *menu = [UIButton buttonWithType:UIButtonTypeSystem];
-    [menu setTitle:@"📋" forState:UIControlStateNormal];
-    menu.titleLabel.font = [UIFont systemFontOfSize:14];
-    menu.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.8];
-    menu.layer.cornerRadius = 14.0;
+    UIImage *menuImg = AMGetSystemIcon(@"slider.horizontal.3", @"📋", 14.0, UIFontWeightMedium);
+    if (menuImg) {
+        [menu setImage:menuImg forState:UIControlStateNormal];
+        menu.tintColor = [UIColor colorWithWhite:0.90 alpha:1.0];
+    } else {
+        [menu setTitle:@"📋" forState:UIControlStateNormal];
+        menu.titleLabel.font = [UIFont systemFontOfSize:14];
+    }
+    menu.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.8];
+    menu.layer.cornerRadius = 15.0;
     [menu addTarget:bar action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(menu);
     [capsule addSubview:menu];
     bar.menuBtn = menu;
 
-    // 5. Verse Pill Button [⚡ #1/N: "Lời câu..."]
+    // 6. Verse Pill Center Button [⚡ #1/N: "Câu hát..."]
     UIButton *verse = [UIButton buttonWithType:UIButtonTypeSystem];
-    verse.backgroundColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.18]; // #00FFA8
-    verse.layer.cornerRadius = 14.0;
+    verse.backgroundColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.16]; // Emerald Glow
+    verse.layer.cornerRadius = 15.0;
     verse.layer.borderWidth = 0.8;
-    verse.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.5].CGColor; // #00FFA8
+    verse.layer.borderColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:0.45].CGColor;
     [verse setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    verse.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    verse.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
     verse.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    verse.contentEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 8);
-
+    verse.contentEdgeInsets = UIEdgeInsetsMake(0, 10.0, 0, 10.0);
     [verse addTarget:bar action:@selector(verseTapped) forControlEvents:UIControlEventTouchUpInside];
+    AMApplySpringTouchAnimation(verse);
     [capsule addSubview:verse];
     bar.versePillBtn = verse;
 
@@ -1784,11 +1872,11 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 }
 
 - (CGSize)intrinsicContentSize {
-    return CGSizeMake(UIViewNoIntrinsicMetric, 42.0);
+    return CGSizeMake(UIViewNoIntrinsicMetric, 44.0);
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
-    return CGSizeMake(size.width, 42.0);
+    return CGSizeMake(size.width, 44.0);
 }
 
 - (void)layoutSubviews {
@@ -1797,31 +1885,30 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     CGFloat w = self.bounds.size.width;
     CGFloat padLeft = MAX(8.0, insets.left);
     CGFloat padRight = MAX(8.0, insets.right);
-    
+
     CGFloat capW = w - padLeft - padRight;
     if (capW < 100.0) capW = [UIScreen mainScreen].bounds.size.width - 16.0;
-    
-    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 36.0);
 
-    CGFloat btnH = 28.0;
+    self.capsule.frame = CGRectMake(padLeft, 3.0, capW, 38.0);
+
+    CGFloat btnH = 30.0;
     CGFloat btnY = 4.0;
 
-    self.prevBtn.frame = CGRectMake(4.0, btnY, 28.0, btnH);
-    self.nextBtn.frame = CGRectMake(36.0, btnY, 28.0, btnH);
+    self.prevBtn.frame = CGRectMake(4.0, btnY, 30.0, btnH);
+    self.nextBtn.frame = CGRectMake(38.0, btnY, 30.0, btnH);
 
-    self.closeBtn.frame = CGRectMake(capW - 32.0, btnY, 28.0, btnH);
-    self.menuBtn.frame = CGRectMake(capW - 64.0, btnY, 28.0, btnH);
+    self.closeBtn.frame = CGRectMake(capW - 34.0, btnY, 30.0, btnH);
+    self.menuBtn.frame = CGRectMake(capW - 68.0, btnY, 30.0, btnH);
 
-    CGFloat centerStartX = 68.0;
-    CGFloat centerW = capW - 68.0 - 68.0;
+    CGFloat centerStartX = 72.0;
+    CGFloat centerW = capW - 72.0 - 72.0;
     if (centerW < 60.0) centerW = 60.0;
     self.versePillBtn.frame = CGRectMake(centerStartX, btnY, centerW, btnH);
 }
 
 - (void)refreshDisplay {
     AMLyricsQueueManager *mgr = [AMLyricsQueueManager sharedManager];
-    
-    // Always keep all buttons visible!
+
     self.prevBtn.hidden = NO;
     self.nextBtn.hidden = NO;
     self.menuBtn.hidden = NO;
@@ -1833,8 +1920,8 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
         self.prevBtn.alpha = 0.35;
         self.nextBtn.enabled = NO;
         self.nextBtn.alpha = 0.35;
-        [self.versePillBtn setTitle:@"📋 Chạm để Nạp Lời Bài Hát" forState:UIControlStateNormal];
-        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.0 green:0.90 blue:0.46 alpha:1.0] forState:UIControlStateNormal];
+        [self.versePillBtn setTitle:@"✨ Chạm để nạp lời bài hát..." forState:UIControlStateNormal];
+        [self.versePillBtn setTitleColor:[UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0] forState:UIControlStateNormal];
     } else {
         self.prevBtn.enabled = (mgr.currentIndex > 0);
         self.prevBtn.alpha = (mgr.currentIndex > 0) ? 1.0 : 0.4;
@@ -1844,7 +1931,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
         NSUInteger cur = mgr.currentIndex + 1;
         NSString *line = [mgr currentLineText] ?: @"";
-        NSString *title = [NSString stringWithFormat:@"⚡ %lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
+        NSString *title = [NSString stringWithFormat:@"⚡ #%lu/%lu: \"%@\"", (unsigned long)cur, (unsigned long)mgr.lyricsLines.count, line];
         [self.versePillBtn setTitle:title forState:UIControlStateNormal];
         [self.versePillBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     }
@@ -1941,7 +2028,6 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
     }
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
-
     [self.targetVC presentViewController:sheet animated:YES completion:nil];
 }
 
@@ -1965,7 +2051,7 @@ static id hook_UIActivityViewController_initWithActivityItems(id self, SEL _cmd,
 
 - (void)loadTapped {
     AMBatchLyricsViewController *modal = [[AMBatchLyricsViewController alloc] init];
-    modal.modalPresentationStyle = UIModalPresentationFormSheet;
+    modal.modalPresentationStyle = UIModalPresentationPageSheet;
     __weak typeof(self) weakSelf = self;
     modal.onLyricsLoaded = ^{
         [weakSelf refreshDisplay];
@@ -2026,32 +2112,6 @@ static void hook_AudioServicesPlayAlertSoundWithCompletion(SystemSoundID soundID
     return;
 }
 
-static void neutralizeAllClassAndMetaMethods(const char *className) {
-    Class cls = objc_getClass(className);
-    if (!cls) return;
-
-    Class classesToScan[] = { cls, object_getClass((id)cls) };
-    for (int c = 0; c < 2; c++) {
-        Class targetCls = classesToScan[c];
-        if (!targetCls) continue;
-        unsigned int count = 0;
-        Method *methods = class_copyMethodList(targetCls, &count);
-        if (methods) {
-            for (unsigned int i = 0; i < count; i++) {
-                SEL sel = method_getName(methods[i]);
-                const char *selName = sel_getName(sel);
-                if (strcmp(selName, "init") == 0 || strcmp(selName, "dealloc") == 0 ||
-                    strncmp(selName, "initWith", 8) == 0 || strcmp(selName, ".cxx_destruct") == 0 ||
-                    strcmp(selName, "class") == 0 || strcmp(selName, "description") == 0) {
-                    continue;
-                }
-                method_setImplementation(methods[i], (IMP)noop_haptic_void);
-            }
-            free(methods);
-        }
-    }
-}
-
 static void AMNeutralizeAllHaptics(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -2085,11 +2145,13 @@ static void AMNeutralizeAllHaptics(void) {
             }
         }
 
-        // 3. Triệt tiêu rõ ràng từng phương thức chính của UIKit Feedback Generator
+        // 3. Triệt tiêu các phương thức thực thi rung của UIKit Feedback Generators
         Class selGen = [UISelectionFeedbackGenerator class];
         if (selGen) {
             Method m = class_getInstanceMethod(selGen, @selector(selectionChanged));
             if (m) method_setImplementation(m, (IMP)noop_haptic_void);
+            Method mLoc = class_getInstanceMethod(selGen, sel_registerName("selectionChangedAtLocation:"));
+            if (mLoc) method_setImplementation(mLoc, (IMP)noop_haptic_void);
         }
         Class impGen = [UIImpactFeedbackGenerator class];
         if (impGen) {
@@ -2097,42 +2159,32 @@ static void AMNeutralizeAllHaptics(void) {
             if (m1) method_setImplementation(m1, (IMP)noop_haptic_void);
             Method m2 = class_getInstanceMethod(impGen, @selector(impactOccurredWithIntensity:));
             if (m2) method_setImplementation(m2, (IMP)noop_haptic_void);
+            Method m3 = class_getInstanceMethod(impGen, sel_registerName("impactOccurredWithIntensity:atLocation:"));
+            if (m3) method_setImplementation(m3, (IMP)noop_haptic_void);
+            Method m4 = class_getInstanceMethod(impGen, sel_registerName("impactOccurredAtLocation:"));
+            if (m4) method_setImplementation(m4, (IMP)noop_haptic_void);
         }
         Class notGen = [UINotificationFeedbackGenerator class];
         if (notGen) {
             Method m = class_getInstanceMethod(notGen, @selector(notificationOccurred:));
             if (m) method_setImplementation(m, (IMP)noop_haptic_void);
+            Method mLoc = class_getInstanceMethod(notGen, sel_registerName("notificationOccurred:atLocation:"));
+            if (mLoc) method_setImplementation(mLoc, (IMP)noop_haptic_void);
         }
         Class baseGen = [UIFeedbackGenerator class];
         if (baseGen) {
             Method mPrep = class_getInstanceMethod(baseGen, @selector(prepare));
             if (mPrep) method_setImplementation(mPrep, (IMP)noop_haptic_void);
-            SEL selPlay = sel_registerName("_playFeedback:atTime:");
-            Method mPlay = class_getInstanceMethod(baseGen, selPlay);
+            Method mAct = class_getInstanceMethod(baseGen, sel_registerName("activateWithCompletionBlock:"));
+            if (mAct) method_setImplementation(mAct, (IMP)noop_haptic_void);
+            Method mPlay = class_getInstanceMethod(baseGen, sel_registerName("_playFeedback:withTimestamp:"));
             if (mPlay) method_setImplementation(mPlay, (IMP)noop_haptic_void);
-            SEL selPlay2 = sel_registerName("_playFeedback:");
-            Method mPlay2 = class_getInstanceMethod(baseGen, selPlay2);
-            if (mPlay2) method_setImplementation(mPlay2, (IMP)noop_haptic_void);
+            Method mUpd = class_getInstanceMethod(baseGen, sel_registerName("_clientDidUpdateFeedback:"));
+            if (mUpd) method_setImplementation(mUpd, (IMP)noop_haptic_void);
         }
 
-        // 4. Triệt tiêu toàn bộ methods trong tất cả các lớp Feedback Generator của UIKit (Instance + Class)
-        const char *uiFeedbackClasses[] = {
-            "UIFeedbackGenerator",
-            "UIImpactFeedbackGenerator",
-            "UISelectionFeedbackGenerator",
-            "UINotificationFeedbackGenerator",
-            "_UIImpactFeedbackGenerator",
-            "_UISelectionFeedbackGenerator",
-            "_UINotificationFeedbackGenerator",
-            "_UIFeedbackEngine",
-            "_UIFeedbackPattern",
-            NULL
-        };
-        for (int i = 0; uiFeedbackClasses[i] != NULL; i++) {
-            neutralizeAllClassAndMetaMethods(uiFeedbackClasses[i]);
-        }
 
-        // 5. Triệt tiêu CoreHaptics (CHHapticEngine, CHHapticPatternPlayer & capabilities)
+        // 4. Triệt tiêu CoreHaptics an toàn (Trả về NO/nil cho hardware capability)
         Class chEngineCls = objc_getClass("CHHapticEngine");
         if (chEngineCls) {
             Class metaCh = object_getClass((id)chEngineCls);
@@ -2150,26 +2202,9 @@ static void AMNeutralizeAllHaptics(void) {
             if (mCreateAdv) method_setImplementation(mCreateAdv, (IMP)noop_haptic_nil);
             Method mStartComp = class_getInstanceMethod(chEngineCls, sel_registerName("startWithCompletionHandler:"));
             if (mStartComp) method_setImplementation(mStartComp, (IMP)hook_CHHapticEngine_startWithCompletionHandler);
-
-            neutralizeAllClassAndMetaMethods("CHHapticEngine");
-        }
-        neutralizeAllClassAndMetaMethods("CHHapticPatternPlayer");
-
-        // 6. Triệt tiêu toàn bộ lớp Haptic riêng của Alight Motion & SDKs
-        const char *amHapticClasses[] = {
-            "_TtC12AlightMotion6Haptic",
-            "_TtCC12AlightMotion6Haptic6Impact",
-            "_TtCC12AlightMotion6Haptic9Selection",
-            "_TtCC12AlightMotion6Haptic12Notification",
-            "_TtC18InjetMosaicHelpers21HapticFeedbackManager",
-            "_TtC12VungleAdsSDK21HapticFeedbackManager",
-            NULL
-        };
-        for (int i = 0; amHapticClasses[i] != NULL; i++) {
-            neutralizeAllClassAndMetaMethods(amHapticClasses[i]);
         }
 
-        NSLog(@"[AlightMotionUltra] Successfully neutralized 100%% of all haptic engines globally!");
+        NSLog(@"[AlightMotionUltra] Successfully neutralized haptics cleanly with 100%% stability!");
     });
 }
 
