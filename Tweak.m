@@ -102,17 +102,77 @@ static OSStatus hook_SecItemDelete(CFDictionaryRef query) {
 }
 
 #pragma mark - =========================================================
-#pragma mark 2. Native Pro & Watermark Annihilator (Clean & Blatant-Free)
+#pragma mark 2. Native Pro & Watermark Annihilator (Permanent Self-Healing Guard)
 #pragma mark - =========================================================
+
+static NSDictionary *AMGetProSubscriptionsDictionary(void) {
+    return @{
+        @"alightcreative.motion.1y_t80": @{
+            @"product_id": @"alightcreative.motion.1y_t80",
+            @"status": @"active",
+            @"expires_date_ms": @"4102444800000",
+            @"is_trial_period": @NO,
+            @"auto_renew_status": @YES
+        }
+    };
+}
+
+static inline BOOL AMIsProKey(NSString *key) {
+    if (!key) return NO;
+    static NSSet *s_proKeys = nil;
+    static dispatch_once_t s_once;
+    dispatch_once(&s_once, ^{
+        s_proKeys = [[NSSet alloc] initWithArray:@[
+            @"UnlockAllProFeatures",
+            @"isSubscribedToUltra",
+            @"isPremium",
+            @"hasMembership",
+            @"benefit_remove_watermark",
+            @"remove_watermark",
+            @"has_active_subscriptions",
+            @"isSubscribed",
+            @"is_subscribed",
+            @"isPremiumUser",
+            @"watermark_removed",
+            @"forced_subscription_tier_key",
+            @"Forced Subscription status",
+            @"subscription_status",
+            @"subscriptionStatus",
+            @"AM_ActiveProductID",
+            @"activeProductID",
+            @"productId",
+            @"active_subscriptions",
+            @"activeSubscriptions",
+            @"activeSubscriptionsOverride",
+            @"activeLifetimesOverride",
+            @"activeBundleSubscriptionsOverride",
+            @"activeExternalSubscriptionsOverride",
+            @"active_subscriptions_features",
+            @"active_bundle_subscriptions",
+            @"active_bundle_subscriptions_features",
+            @"purchased_lifetimes",
+            @"valid_product_ids",
+            @"monetization.storage",
+            @"monetization.storage.fake.flow",
+            @"benefit_export_hevc",
+            @"benefit_export_4k",
+            @"benefit_export_60fps",
+            @"benefit_all_effects"
+        ]];
+    });
+    return [s_proKeys containsObject:key];
+}
 
 static id (*orig_NSUserDefaults_objectForKey)(id, SEL, NSString *);
 static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultName) {
     if (defaultName) {
+        if ([defaultName isEqualToString:@"isFreeUser"]) return @NO;
         if ([defaultName isEqualToString:@"forced_subscription_tier_key"]) return @"cloudSubscriber";
         if ([defaultName isEqualToString:@"activeSubscriptionsOverride"] ||
             [defaultName isEqualToString:@"activeLifetimesOverride"] ||
             [defaultName isEqualToString:@"activeBundleSubscriptionsOverride"] ||
-            [defaultName isEqualToString:@"activeExternalSubscriptionsOverride"]) {
+            [defaultName isEqualToString:@"activeExternalSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"valid_product_ids"]) {
             return @[@"alightcreative.motion.1y_t80"];
         }
         if ([defaultName isEqualToString:@"Forced Subscription status"] ||
@@ -126,16 +186,11 @@ static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultN
             return @"alightcreative.motion.1y_t80";
         }
         if ([defaultName isEqualToString:@"active_subscriptions"] ||
-            [defaultName isEqualToString:@"activeSubscriptions"]) {
-            return @{
-                @"alightcreative.motion.1y_t80": @{
-                    @"product_id": @"alightcreative.motion.1y_t80",
-                    @"status": @"active",
-                    @"expires_date_ms": @"4102444800000",
-                    @"is_trial_period": @NO,
-                    @"auto_renew_status": @YES
-                }
-            };
+            [defaultName isEqualToString:@"activeSubscriptions"] ||
+            [defaultName isEqualToString:@"active_subscriptions_features"] ||
+            [defaultName isEqualToString:@"active_bundle_subscriptions"] ||
+            [defaultName isEqualToString:@"active_bundle_subscriptions_features"]) {
+            return AMGetProSubscriptionsDictionary();
         }
         if ([defaultName isEqualToString:@"UnlockAllProFeatures"] ||
             [defaultName isEqualToString:@"isSubscribedToUltra"] ||
@@ -147,10 +202,13 @@ static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultN
             [defaultName isEqualToString:@"isSubscribed"] ||
             [defaultName isEqualToString:@"is_subscribed"] ||
             [defaultName isEqualToString:@"isPremiumUser"] ||
-            [defaultName isEqualToString:@"watermark_removed"]) {
+            [defaultName isEqualToString:@"watermark_removed"] ||
+            [defaultName isEqualToString:@"benefit_export_hevc"] ||
+            [defaultName isEqualToString:@"benefit_export_4k"] ||
+            [defaultName isEqualToString:@"benefit_export_60fps"] ||
+            [defaultName isEqualToString:@"benefit_all_effects"]) {
             return @YES;
         }
-        if ([defaultName isEqualToString:@"isFreeUser"]) return @NO;
     }
     return orig_NSUserDefaults_objectForKey ? orig_NSUserDefaults_objectForKey(self, _cmd, defaultName) : nil;
 }
@@ -158,6 +216,7 @@ static id hook_NSUserDefaults_objectForKey(id self, SEL _cmd, NSString *defaultN
 static BOOL (*orig_NSUserDefaults_boolForKey)(id, SEL, NSString *);
 static BOOL hook_NSUserDefaults_boolForKey(id self, SEL _cmd, NSString *defaultName) {
     if (defaultName) {
+        if ([defaultName isEqualToString:@"isFreeUser"]) return NO;
         if ([defaultName isEqualToString:@"UnlockAllProFeatures"] ||
             [defaultName isEqualToString:@"isSubscribedToUltra"] ||
             [defaultName isEqualToString:@"isPremium"] ||
@@ -168,12 +227,152 @@ static BOOL hook_NSUserDefaults_boolForKey(id self, SEL _cmd, NSString *defaultN
             [defaultName isEqualToString:@"isSubscribed"] ||
             [defaultName isEqualToString:@"is_subscribed"] ||
             [defaultName isEqualToString:@"isPremiumUser"] ||
-            [defaultName isEqualToString:@"watermark_removed"]) {
+            [defaultName isEqualToString:@"watermark_removed"] ||
+            [defaultName isEqualToString:@"benefit_export_hevc"] ||
+            [defaultName isEqualToString:@"benefit_export_4k"] ||
+            [defaultName isEqualToString:@"benefit_export_60fps"] ||
+            [defaultName isEqualToString:@"benefit_all_effects"]) {
             return YES;
         }
-        if ([defaultName isEqualToString:@"isFreeUser"]) return NO;
     }
     return orig_NSUserDefaults_boolForKey ? orig_NSUserDefaults_boolForKey(self, _cmd, defaultName) : NO;
+}
+
+static NSString * (*orig_NSUserDefaults_stringForKey)(id, SEL, NSString *);
+static NSString * hook_NSUserDefaults_stringForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"forced_subscription_tier_key"]) return @"cloudSubscriber";
+        if ([defaultName isEqualToString:@"Forced Subscription status"] ||
+            [defaultName isEqualToString:@"subscription_status"] ||
+            [defaultName isEqualToString:@"subscriptionStatus"]) return @"active";
+        if ([defaultName isEqualToString:@"AM_ActiveProductID"] ||
+            [defaultName isEqualToString:@"activeProductID"] ||
+            [defaultName isEqualToString:@"productId"]) return @"alightcreative.motion.1y_t80";
+    }
+    return orig_NSUserDefaults_stringForKey ? orig_NSUserDefaults_stringForKey(self, _cmd, defaultName) : nil;
+}
+
+static NSArray * (*orig_NSUserDefaults_arrayForKey)(id, SEL, NSString *);
+static NSArray * hook_NSUserDefaults_arrayForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"activeSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"activeLifetimesOverride"] ||
+            [defaultName isEqualToString:@"activeBundleSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"activeExternalSubscriptionsOverride"] ||
+            [defaultName isEqualToString:@"valid_product_ids"]) {
+            return @[@"alightcreative.motion.1y_t80"];
+        }
+    }
+    return orig_NSUserDefaults_arrayForKey ? orig_NSUserDefaults_arrayForKey(self, _cmd, defaultName) : nil;
+}
+
+static NSDictionary * (*orig_NSUserDefaults_dictionaryForKey)(id, SEL, NSString *);
+static NSDictionary * hook_NSUserDefaults_dictionaryForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"active_subscriptions"] ||
+            [defaultName isEqualToString:@"activeSubscriptions"] ||
+            [defaultName isEqualToString:@"active_subscriptions_features"] ||
+            [defaultName isEqualToString:@"active_bundle_subscriptions"] ||
+            [defaultName isEqualToString:@"active_bundle_subscriptions_features"]) {
+            return AMGetProSubscriptionsDictionary();
+        }
+    }
+    return orig_NSUserDefaults_dictionaryForKey ? orig_NSUserDefaults_dictionaryForKey(self, _cmd, defaultName) : nil;
+}
+
+static id (*orig_NSUserDefaults_valueForKey)(id, SEL, NSString *);
+static id hook_NSUserDefaults_valueForKey(id self, SEL _cmd, NSString *key) {
+    if (key && (AMIsProKey(key) || [key isEqualToString:@"isFreeUser"])) {
+        return hook_NSUserDefaults_objectForKey(self, @selector(objectForKey:), key);
+    }
+    return orig_NSUserDefaults_valueForKey ? orig_NSUserDefaults_valueForKey(self, _cmd, key) : nil;
+}
+
+static id (*orig_NSUserDefaults_objectForKeyedSubscript)(id, SEL, NSString *);
+static id hook_NSUserDefaults_objectForKeyedSubscript(id self, SEL _cmd, NSString *key) {
+    if (key && (AMIsProKey(key) || [key isEqualToString:@"isFreeUser"])) {
+        return hook_NSUserDefaults_objectForKey(self, @selector(objectForKey:), key);
+    }
+    return orig_NSUserDefaults_objectForKeyedSubscript ? orig_NSUserDefaults_objectForKeyedSubscript(self, _cmd, key) : nil;
+}
+
+static NSDictionary * (*orig_NSUserDefaults_dictionaryRepresentation)(id, SEL);
+static NSDictionary * hook_NSUserDefaults_dictionaryRepresentation(id self, SEL _cmd) {
+    NSDictionary *dict = orig_NSUserDefaults_dictionaryRepresentation ? orig_NSUserDefaults_dictionaryRepresentation(self, _cmd) : nil;
+    NSMutableDictionary *mut = dict ? [dict mutableCopy] : [NSMutableDictionary dictionary];
+    [mut setObject:@YES forKey:@"UnlockAllProFeatures"];
+    [mut setObject:@YES forKey:@"isSubscribedToUltra"];
+    [mut setObject:@YES forKey:@"isPremium"];
+    [mut setObject:@YES forKey:@"hasMembership"];
+    [mut setObject:@NO forKey:@"isFreeUser"];
+    [mut setObject:@YES forKey:@"benefit_remove_watermark"];
+    [mut setObject:@YES forKey:@"remove_watermark"];
+    [mut setObject:@YES forKey:@"has_active_subscriptions"];
+    [mut setObject:@YES forKey:@"isSubscribed"];
+    [mut setObject:@YES forKey:@"is_subscribed"];
+    [mut setObject:@YES forKey:@"isPremiumUser"];
+    [mut setObject:@YES forKey:@"watermark_removed"];
+    [mut setObject:@"cloudSubscriber" forKey:@"forced_subscription_tier_key"];
+    [mut setObject:@"active" forKey:@"Forced Subscription status"];
+    [mut setObject:@"alightcreative.motion.1y_t80" forKey:@"AM_ActiveProductID"];
+    [mut setObject:AMGetProSubscriptionsDictionary() forKey:@"active_subscriptions"];
+    [mut setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeSubscriptionsOverride"];
+    [mut setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeLifetimesOverride"];
+    [mut setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeBundleSubscriptionsOverride"];
+    [mut setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeExternalSubscriptionsOverride"];
+    return mut;
+}
+
+static void (*orig_NSUserDefaults_setObject_forKey)(id, SEL, id, NSString *);
+static void hook_NSUserDefaults_setObject_forKey(id self, SEL _cmd, id value, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"isFreeUser"]) {
+            if (orig_NSUserDefaults_setObject_forKey) orig_NSUserDefaults_setObject_forKey(self, _cmd, @NO, defaultName);
+            return;
+        }
+        if (AMIsProKey(defaultName)) {
+            id forcedVal = hook_NSUserDefaults_objectForKey(self, @selector(objectForKey:), defaultName);
+            if (orig_NSUserDefaults_setObject_forKey) orig_NSUserDefaults_setObject_forKey(self, _cmd, forcedVal ? forcedVal : @YES, defaultName);
+            return;
+        }
+    }
+    if (orig_NSUserDefaults_setObject_forKey) orig_NSUserDefaults_setObject_forKey(self, _cmd, value, defaultName);
+}
+
+static void (*orig_NSUserDefaults_setBool_forKey)(id, SEL, BOOL, NSString *);
+static void hook_NSUserDefaults_setBool_forKey(id self, SEL _cmd, BOOL value, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"isFreeUser"]) {
+            if (orig_NSUserDefaults_setBool_forKey) orig_NSUserDefaults_setBool_forKey(self, _cmd, NO, defaultName);
+            return;
+        }
+        if (AMIsProKey(defaultName)) {
+            if (orig_NSUserDefaults_setBool_forKey) orig_NSUserDefaults_setBool_forKey(self, _cmd, YES, defaultName);
+            return;
+        }
+    }
+    if (orig_NSUserDefaults_setBool_forKey) orig_NSUserDefaults_setBool_forKey(self, _cmd, value, defaultName);
+}
+
+static void (*orig_NSUserDefaults_removeObjectForKey)(id, SEL, NSString *);
+static void hook_NSUserDefaults_removeObjectForKey(id self, SEL _cmd, NSString *defaultName) {
+    if (defaultName) {
+        if ([defaultName isEqualToString:@"isFreeUser"] || AMIsProKey(defaultName)) {
+            // Block removing Pro keys upon user login/logout
+            return;
+        }
+    }
+    if (orig_NSUserDefaults_removeObjectForKey) orig_NSUserDefaults_removeObjectForKey(self, _cmd, defaultName);
+}
+
+static void (*orig_NSUserDefaults_setValue_forKey)(id, SEL, id, NSString *);
+static void hook_NSUserDefaults_setValue_forKey(id self, SEL _cmd, id value, NSString *key) {
+    hook_NSUserDefaults_setObject_forKey(self, @selector(setObject:forKey:), value, key);
+}
+
+static void (*orig_NSUserDefaults_setObject_forKeyedSubscript)(id, SEL, id, NSString *);
+static void hook_NSUserDefaults_setObject_forKeyedSubscript(id self, SEL _cmd, id value, NSString *key) {
+    hook_NSUserDefaults_setObject_forKey(self, @selector(setObject:forKey:), value, key);
 }
 
 static void AMApplyProSettings(void) {
@@ -190,25 +389,24 @@ static void AMApplyProSettings(void) {
     [ud setObject:@YES forKey:@"is_subscribed"];
     [ud setObject:@YES forKey:@"isPremiumUser"];
     [ud setObject:@YES forKey:@"watermark_removed"];
+    [ud setObject:@YES forKey:@"benefit_export_hevc"];
+    [ud setObject:@YES forKey:@"benefit_export_4k"];
+    [ud setObject:@YES forKey:@"benefit_export_60fps"];
+    [ud setObject:@YES forKey:@"benefit_all_effects"];
     [ud setObject:@"cloudSubscriber" forKey:@"forced_subscription_tier_key"];
     [ud setObject:@"active" forKey:@"Forced Subscription status"];
     [ud setObject:@"alightcreative.motion.1y_t80" forKey:@"AM_ActiveProductID"];
     
-    // Alight Motion internal Monetization storage
-    NSDictionary *subInfo = @{
-        @"alightcreative.motion.1y_t80": @{
-            @"product_id": @"alightcreative.motion.1y_t80",
-            @"status": @"active",
-            @"expires_date_ms": @"4102444800000",
-            @"is_trial_period": @NO,
-            @"auto_renew_status": @YES
-        }
-    };
+    NSDictionary *subInfo = AMGetProSubscriptionsDictionary();
     [ud setObject:subInfo forKey:@"active_subscriptions"];
+    [ud setObject:subInfo forKey:@"active_subscriptions_features"];
+    [ud setObject:subInfo forKey:@"active_bundle_subscriptions"];
+    [ud setObject:subInfo forKey:@"active_bundle_subscriptions_features"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeSubscriptionsOverride"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeLifetimesOverride"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeBundleSubscriptionsOverride"];
     [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"activeExternalSubscriptionsOverride"];
+    [ud setObject:@[@"alightcreative.motion.1y_t80"] forKey:@"valid_product_ids"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_analytics_storage"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_ad_storage"];
     [ud setBool:NO forKey:@"google_analytics_default_allow_ad_user_data"];
@@ -221,6 +419,7 @@ static void AMApplyProSettings(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         Class udClass = [NSUserDefaults class];
+        
         Method mObj = class_getInstanceMethod(udClass, @selector(objectForKey:));
         if (mObj) {
             orig_NSUserDefaults_objectForKey = (void *)method_getImplementation(mObj);
@@ -231,8 +430,176 @@ static void AMApplyProSettings(void) {
             orig_NSUserDefaults_boolForKey = (void *)method_getImplementation(mBool);
             method_setImplementation(mBool, (IMP)hook_NSUserDefaults_boolForKey);
         }
+        Method mStr = class_getInstanceMethod(udClass, @selector(stringForKey:));
+        if (mStr) {
+            orig_NSUserDefaults_stringForKey = (void *)method_getImplementation(mStr);
+            method_setImplementation(mStr, (IMP)hook_NSUserDefaults_stringForKey);
+        }
+        Method mArr = class_getInstanceMethod(udClass, @selector(arrayForKey:));
+        if (mArr) {
+            orig_NSUserDefaults_arrayForKey = (void *)method_getImplementation(mArr);
+            method_setImplementation(mArr, (IMP)hook_NSUserDefaults_arrayForKey);
+        }
+        Method mDict = class_getInstanceMethod(udClass, @selector(dictionaryForKey:));
+        if (mDict) {
+            orig_NSUserDefaults_dictionaryForKey = (void *)method_getImplementation(mDict);
+            method_setImplementation(mDict, (IMP)hook_NSUserDefaults_dictionaryForKey);
+        }
+        Method mVal = class_getInstanceMethod(udClass, @selector(valueForKey:));
+        if (mVal) {
+            orig_NSUserDefaults_valueForKey = (void *)method_getImplementation(mVal);
+            method_setImplementation(mVal, (IMP)hook_NSUserDefaults_valueForKey);
+        }
+        Method mSubscript = class_getInstanceMethod(udClass, @selector(objectForKeyedSubscript:));
+        if (mSubscript) {
+            orig_NSUserDefaults_objectForKeyedSubscript = (void *)method_getImplementation(mSubscript);
+            method_setImplementation(mSubscript, (IMP)hook_NSUserDefaults_objectForKeyedSubscript);
+        }
+        Method mDictRep = class_getInstanceMethod(udClass, @selector(dictionaryRepresentation));
+        if (mDictRep) {
+            orig_NSUserDefaults_dictionaryRepresentation = (void *)method_getImplementation(mDictRep);
+            method_setImplementation(mDictRep, (IMP)hook_NSUserDefaults_dictionaryRepresentation);
+        }
+
+        // Write guard
+        Method mSetObj = class_getInstanceMethod(udClass, @selector(setObject:forKey:));
+        if (mSetObj) {
+            orig_NSUserDefaults_setObject_forKey = (void *)method_getImplementation(mSetObj);
+            method_setImplementation(mSetObj, (IMP)hook_NSUserDefaults_setObject_forKey);
+        }
+        Method mSetBool = class_getInstanceMethod(udClass, @selector(setBool:forKey:));
+        if (mSetBool) {
+            orig_NSUserDefaults_setBool_forKey = (void *)method_getImplementation(mSetBool);
+            method_setImplementation(mSetBool, (IMP)hook_NSUserDefaults_setBool_forKey);
+        }
+        Method mRemObj = class_getInstanceMethod(udClass, @selector(removeObjectForKey:));
+        if (mRemObj) {
+            orig_NSUserDefaults_removeObjectForKey = (void *)method_getImplementation(mRemObj);
+            method_setImplementation(mRemObj, (IMP)hook_NSUserDefaults_removeObjectForKey);
+        }
+        Method mSetVal = class_getInstanceMethod(udClass, @selector(setValue:forKey:));
+        if (mSetVal) {
+            orig_NSUserDefaults_setValue_forKey = (void *)method_getImplementation(mSetVal);
+            method_setImplementation(mSetVal, (IMP)hook_NSUserDefaults_setValue_forKey);
+        }
+        Method mSetSubscript = class_getInstanceMethod(udClass, @selector(setObject:forKeyedSubscript:));
+        if (mSetSubscript) {
+            orig_NSUserDefaults_setObject_forKeyedSubscript = (void *)method_getImplementation(mSetSubscript);
+            method_setImplementation(mSetSubscript, (IMP)hook_NSUserDefaults_setObject_forKeyedSubscript);
+        }
     });
 }
+
+static BOOL hook_always_false(id self, SEL _cmd) { return NO; }
+static BOOL hook_always_true(id self, SEL _cmd) { return YES; }
+
+static void AMHookAllRuntimeProMethods(void) {
+    int numClasses = objc_getClassList(NULL, 0);
+    if (numClasses > 0) {
+        Class *classes = (__unsafe_unretained Class *)malloc(sizeof(Class) * numClasses);
+        numClasses = objc_getClassList(classes, numClasses);
+        for (int i = 0; i < numClasses; i++) {
+            Class cls = classes[i];
+            const char *cName = class_getName(cls);
+            if (!cName) continue;
+            if (cName[0] == '_' || strstr(cName, "Alight") || strstr(cName, "Wolf") || strstr(cName, "BSP") || strstr(cName, "Monetization") || strstr(cName, "Oracle")) {
+                Method mFree = class_getInstanceMethod(cls, sel_registerName("isFreeUser"));
+                if (mFree) {
+                    method_setImplementation(mFree, (IMP)hook_always_false);
+                }
+                Method mSub = class_getInstanceMethod(cls, sel_registerName("isSubscribed"));
+                if (mSub) {
+                    method_setImplementation(mSub, (IMP)hook_always_true);
+                }
+                Method mUltra = class_getInstanceMethod(cls, sel_registerName("isSubscribedToUltra"));
+                if (mUltra) {
+                    method_setImplementation(mUltra, (IMP)hook_always_true);
+                }
+                Method mPrem = class_getInstanceMethod(cls, sel_registerName("isPremiumUser"));
+                if (mPrem) {
+                    method_setImplementation(mPrem, (IMP)hook_always_true);
+                }
+            }
+        }
+        free(classes);
+    }
+}
+
+// Hook PopupButtonCell to hide membership lock icon permanently
+static void (*orig_PopupButtonCell_layoutSubviews)(id, SEL);
+static void hook_PopupButtonCell_layoutSubviews(id self, SEL _cmd) {
+    if (orig_PopupButtonCell_layoutSubviews) orig_PopupButtonCell_layoutSubviews(self, _cmd);
+    @try {
+        UIImageView *img = [self valueForKey:@"membershipImageView"];
+        if (img) {
+            img.hidden = YES;
+            img.alpha = 0.0f;
+        }
+    } @catch (id ex) {}
+}
+
+static dispatch_source_t s_proHealingTimer = NULL;
+static void AMInitProProtectionEngine(void) {
+    AMApplyProSettings();
+    AMHookAllRuntimeProMethods();
+
+    // Swizzle PopupButtonCell membershipImageView
+    Class cellClass = objc_getClass("_TtC12AlightMotion15PopupButtonCell");
+    if (cellClass) {
+        Method mLayout = class_getInstanceMethod(cellClass, @selector(layoutSubviews));
+        if (mLayout) {
+            orig_PopupButtonCell_layoutSubviews = (void *)method_getImplementation(mLayout);
+            method_setImplementation(mLayout, (IMP)hook_PopupButtonCell_layoutSubviews);
+        }
+    }
+
+    // Register observers for lifecycle & auth changes
+    static dispatch_once_t onceWatchers;
+    dispatch_once(&onceWatchers, ^{
+        NSArray *notifNames = @[
+            UIApplicationDidBecomeActiveNotification,
+            UIApplicationWillEnterForegroundNotification,
+            NSUserDefaultsDidChangeNotification,
+            @"FIRAuthStateDidChangeNotification",
+            @"kFIRAuthStateDidChangeNotification",
+            @"FIRIdTokenDidChangeNotification",
+            @"FBSDKAccessTokenDidChangeNotification",
+            @"AMAccountDidChangeNotification",
+            @"AMUserDidLoginNotification",
+            @"AMUserDidLogoutNotification"
+        ];
+        for (NSString *name in notifNames) {
+            [[NSNotificationCenter defaultCenter] addObserverForName:name
+                                                              object:nil
+                                                               queue:[NSOperationQueue mainQueue]
+                                                          usingBlock:^(NSNotification * _Nonnull note) {
+                AMApplyProSettings();
+                AMHookAllRuntimeProMethods();
+            }];
+        }
+
+        // Heartbeat Self-Healing Daemon Timer (Loop 1.5s)
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+        s_proHealingTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+        if (s_proHealingTimer) {
+            dispatch_source_set_timer(s_proHealingTimer, dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), 1500 * NSEC_PER_MSEC, 200 * NSEC_PER_MSEC);
+            dispatch_source_set_event_handler(s_proHealingTimer, ^{
+                NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+                BOOL isSub = [ud boolForKey:@"has_active_subscriptions"];
+                BOOL isFree = [ud boolForKey:@"isFreeUser"];
+                id subDict = [ud objectForKey:@"active_subscriptions"];
+                if (!isSub || isFree || !subDict) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        AMApplyProSettings();
+                        AMHookAllRuntimeProMethods();
+                    });
+                }
+            });
+            dispatch_resume(s_proHealingTimer);
+        }
+    });
+}
+
 
 
 #pragma mark - =========================================================
@@ -2671,7 +3038,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
     // 0. Instant Cold Boot: Neutralize heavy ad & telemetry SDKs synchronously before UIApplication starts
     AMNeutralizeAdNetworks();
     AMNeutralizeAllHaptics();
-    AMApplyProSettings();
+    AMInitProProtectionEngine();
     AMInitSmoothnessAndPerformanceEngine();
     AMUnlockProjectPackageLimit();
 
@@ -2690,7 +3057,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
 
     dispatch_async(dispatch_get_main_queue(), ^{
         // 2. Apply Pro Monetization state immediately and on launch notification
-        AMApplyProSettings();
+        AMInitProProtectionEngine();
         AMNeutralizeAdNetworks();
         AMNeutralizeAllHaptics();
         AMInitSmoothnessAndPerformanceEngine();
@@ -2699,7 +3066,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification * _Nonnull note) {
-            AMApplyProSettings();
+            AMInitProProtectionEngine();
             AMNeutralizeAdNetworks();
             AMNeutralizeAllHaptics();
             AMInitSmoothnessAndPerformanceEngine();
