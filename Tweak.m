@@ -2417,7 +2417,8 @@ static void AMApplyDefaultWhiteColorPatch(void) {
 
 
 #pragma mark - =========================================================
-#pragma mark 8. Ultimate Smoothness & 120 FPS Performance Engine
+#pragma mark - =========================================================
+#pragma mark 8. True 120Hz Ultra ProMotion Engine & Stutter-Free Metal
 #pragma mark - =========================================================
 
 typedef struct {
@@ -2426,7 +2427,28 @@ typedef struct {
     float preferred;
 } AMFrameRateRange;
 
-// 1. Force 120 FPS ProMotion on all CADisplayLink instances (Timeline, Scrubbing, Animation)
+// 1. Runtime Injection: Bật cờ CADisableMinimumFrameDurationOnPhone để iOS không lock 60Hz
+static id (*orig_NSBundle_objectForInfoDictionaryKey)(NSBundle *, SEL, NSString *);
+static id hook_NSBundle_objectForInfoDictionaryKey(NSBundle *self, SEL _cmd, NSString *key) {
+    if ([key isEqualToString:@"CADisableMinimumFrameDurationOnPhone"]) {
+        return (id)kCFBooleanTrue;
+    }
+    if (orig_NSBundle_objectForInfoDictionaryKey) {
+        return orig_NSBundle_objectForInfoDictionaryKey(self, _cmd, key);
+    }
+    return nil;
+}
+
+// 2. Mở khóa UIScreen tối đa 120 FPS
+static NSInteger hook_UIScreen_maximumFramesPerSecond(id self, SEL _cmd) {
+    return 120;
+}
+
+static CFTimeInterval hook_UIScreen_minimumFrameDuration(id self, SEL _cmd) {
+    return (1.0 / 120.0);
+}
+
+// 3. Khóa cứng 120 FPS trên mọi CADisplayLink (Timeline, Scrubbing, Playhead, Animation)
 static CADisplayLink *(*orig_CADisplayLink_displayLinkWithTarget_selector)(id, SEL, id, SEL);
 static CADisplayLink *hook_CADisplayLink_displayLinkWithTarget_selector(id self, SEL _cmd, id target, SEL sel) {
     CADisplayLink *dl = orig_CADisplayLink_displayLinkWithTarget_selector ? orig_CADisplayLink_displayLinkWithTarget_selector(self, _cmd, target, sel) : nil;
@@ -2435,12 +2457,27 @@ static CADisplayLink *hook_CADisplayLink_displayLinkWithTarget_selector(id self,
             dl.preferredFramesPerSecond = 120;
         }
         if ([dl respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
-            AMFrameRateRange range = { 60.0f, 120.0f, 120.0f };
+            AMFrameRateRange range = { 120.0f, 120.0f, 120.0f }; // True 120Hz Locked
             typedef void (*SetRangeFunc)(id, SEL, AMFrameRateRange);
             ((SetRangeFunc)objc_msgSend)(dl, @selector(setPreferredFrameRateRange:), range);
         }
     }
     return dl;
+}
+
+static void (*orig_CADisplayLink_setPreferredFramesPerSecond)(CADisplayLink *, SEL, NSInteger);
+static void hook_CADisplayLink_setPreferredFramesPerSecond(CADisplayLink *self, SEL _cmd, NSInteger fps) {
+    if (orig_CADisplayLink_setPreferredFramesPerSecond) {
+        orig_CADisplayLink_setPreferredFramesPerSecond(self, _cmd, 120); // Luôn ép 120 FPS
+    }
+}
+
+static void (*orig_CADisplayLink_setPreferredFrameRateRange)(id, SEL, AMFrameRateRange);
+static void hook_CADisplayLink_setPreferredFrameRateRange(id self, SEL _cmd, AMFrameRateRange range) {
+    AMFrameRateRange locked120 = { 120.0f, 120.0f, 120.0f };
+    if (orig_CADisplayLink_setPreferredFrameRateRange) {
+        orig_CADisplayLink_setPreferredFrameRateRange(self, _cmd, locked120);
+    }
 }
 
 static void (*orig_CADisplayLink_addToRunLoop_forMode)(id, SEL, NSRunLoop *, NSRunLoopMode);
@@ -2449,16 +2486,17 @@ static void hook_CADisplayLink_addToRunLoop_forMode(id self, SEL _cmd, NSRunLoop
         ((CADisplayLink *)self).preferredFramesPerSecond = 120;
     }
     if ([self respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
-        AMFrameRateRange range = { 60.0f, 120.0f, 120.0f };
+        AMFrameRateRange range = { 120.0f, 120.0f, 120.0f };
         typedef void (*SetRangeFunc)(id, SEL, AMFrameRateRange);
         ((SetRangeFunc)objc_msgSend)(self, @selector(setPreferredFrameRateRange:), range);
     }
+    // Đảm bảo DisplayLink luôn chạy trong CommonModes để vuốt màn hình không bao giờ bị khựng giật
     if (orig_CADisplayLink_addToRunLoop_forMode) {
-        orig_CADisplayLink_addToRunLoop_forMode(self, _cmd, runloop, mode);
+        orig_CADisplayLink_addToRunLoop_forMode(self, _cmd, runloop, NSRunLoopCommonModes);
     }
 }
 
-// 2. GPU Triple-Buffering for CAMetalLayer (Zero Stutter on Heavy Video & Effects)
+// 4. GPU Triple-Buffering & Zero-Lag CAMetalLayer
 static id (*orig_CAMetalLayer_init)(id, SEL);
 static id hook_CAMetalLayer_init(id self, SEL _cmd) {
     self = orig_CAMetalLayer_init ? orig_CAMetalLayer_init(self, _cmd) : self;
@@ -2472,32 +2510,49 @@ static id hook_CAMetalLayer_init(id self, SEL _cmd) {
         if ([self respondsToSelector:@selector(setDisplaySyncEnabled:)]) {
             ((void(*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setDisplaySyncEnabled:), YES);
         }
+        if ([self respondsToSelector:@selector(setAllowsNextDrawableTimeout:)]) {
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setAllowsNextDrawableTimeout:), NO);
+        }
+        if ([self respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
+            AMFrameRateRange range = { 120.0f, 120.0f, 120.0f };
+            typedef void (*SetRangeFunc)(id, SEL, AMFrameRateRange);
+            ((SetRangeFunc)objc_msgSend)(self, @selector(setPreferredFrameRateRange:), range);
+        }
     }
     return self;
 }
 
-// 3. Thermal Throttling & Low Power Mode Bypass (Prevents FPS drop when iPhone gets warm)
+// 5. CAAnimation 120Hz locked
+static void (*orig_CAAnimation_setPreferredFrameRateRange)(id, SEL, AMFrameRateRange);
+static void hook_CAAnimation_setPreferredFrameRateRange(id self, SEL _cmd, AMFrameRateRange range) {
+    AMFrameRateRange locked120 = { 120.0f, 120.0f, 120.0f };
+    if (orig_CAAnimation_setPreferredFrameRateRange) {
+        orig_CAAnimation_setPreferredFrameRateRange(self, _cmd, locked120);
+    }
+}
+
+// 6. Thermal Throttling & Low Power Mode Bypass (Ngăn iOS hạ xung nhịp CPU/GPU khi máy ấm)
 static NSProcessInfoThermalState hook_NSProcessInfo_thermalState(id self, SEL _cmd) {
     return NSProcessInfoThermalStateNominal; // Always 0 (Cool)
 }
 
 static BOOL hook_NSProcessInfo_isLowPowerModeEnabled(id self, SEL _cmd) {
-    return NO; // Never throttle CPU/GPU
+    return NO; // Không bao giờ bật chế độ tiết kiệm pin hạn chế 120Hz
 }
 
 static UIDeviceBatteryState hook_UIDevice_batteryState(id self, SEL _cmd) {
-    return UIDeviceBatteryStateCharging; // Always charging for max CPU/GPU clock
+    return UIDeviceBatteryStateCharging; // Luôn coi là đang sạc để giữ mức xung nhịp cao nhất
 }
 
 static float hook_UIDevice_batteryLevel(id self, SEL _cmd) {
-    return 1.0f; // 100% full battery
+    return 1.0f; // 100% full pin
 }
 
 static BOOL hook_UIDevice_isBatteryMonitoringEnabled(id self, SEL _cmd) {
     return NO;
 }
 
-// 4. Instant Zero-Stall Video Playback (Timeline Preview Starts Immediately)
+// 7. Instant Zero-Stall Video Playback (Timeline Preview Starts Immediately)
 static void (*orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling)(id, SEL, BOOL);
 static void hook_AVPlayer_setAutomaticallyWaitsToMinimizeStalling(id self, SEL _cmd, BOOL waits) {
     if (orig_AVPlayer_setAutomaticallyWaitsToMinimizeStalling) {
@@ -2505,7 +2560,7 @@ static void hook_AVPlayer_setAutomaticallyWaitsToMinimizeStalling(id self, SEL _
     }
 }
 
-// 5. Expand Texture Cache & Thumbnail Cache Limits (Prevents reload stutters)
+// 8. Tăng dung lượng Cache bộ nhớ cho Preview và Texture Render
 static void AMOptimizeCacheAndMemory(void) {
     NSURLCache *sharedCache = [NSURLCache sharedURLCache];
     if (sharedCache) {
@@ -2517,7 +2572,23 @@ static void AMOptimizeCacheAndMemory(void) {
 static void AMInitSmoothnessAndPerformanceEngine(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        // 1. Hook CADisplayLink for 120 FPS
+        // 1. Hook NSBundle để tiêm cờ CADisableMinimumFrameDurationOnPhone
+        Method mBundleKey = class_getInstanceMethod([NSBundle class], @selector(objectForInfoDictionaryKey:));
+        if (mBundleKey) {
+            orig_NSBundle_objectForInfoDictionaryKey = (void *)method_getImplementation(mBundleKey);
+            method_setImplementation(mBundleKey, (IMP)hook_NSBundle_objectForInfoDictionaryKey);
+        }
+
+        // 2. Hook UIScreen cho 120Hz
+        Class scrClass = [UIScreen class];
+        if (scrClass) {
+            Method mMaxFPS = class_getInstanceMethod(scrClass, @selector(maximumFramesPerSecond));
+            if (mMaxFPS) method_setImplementation(mMaxFPS, (IMP)hook_UIScreen_maximumFramesPerSecond);
+            Method mMinDur = class_getInstanceMethod(scrClass, @selector(minimumFrameDuration));
+            if (mMinDur) method_setImplementation(mMinDur, (IMP)hook_UIScreen_minimumFrameDuration);
+        }
+
+        // 3. Hook CADisplayLink cho 120 FPS
         Class dlClass = [CADisplayLink class];
         if (dlClass) {
             Method mCreate = class_getClassMethod(dlClass, @selector(displayLinkWithTarget:selector:));
@@ -2530,9 +2601,19 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
                 orig_CADisplayLink_addToRunLoop_forMode = (void *)method_getImplementation(mAdd);
                 method_setImplementation(mAdd, (IMP)hook_CADisplayLink_addToRunLoop_forMode);
             }
+            Method mSetFPS = class_getInstanceMethod(dlClass, @selector(setPreferredFramesPerSecond:));
+            if (mSetFPS) {
+                orig_CADisplayLink_setPreferredFramesPerSecond = (void *)method_getImplementation(mSetFPS);
+                method_setImplementation(mSetFPS, (IMP)hook_CADisplayLink_setPreferredFramesPerSecond);
+            }
+            Method mSetRange = class_getInstanceMethod(dlClass, @selector(setPreferredFrameRateRange:));
+            if (mSetRange) {
+                orig_CADisplayLink_setPreferredFrameRateRange = (void *)method_getImplementation(mSetRange);
+                method_setImplementation(mSetRange, (IMP)hook_CADisplayLink_setPreferredFrameRateRange);
+            }
         }
 
-        // 2. Hook CAMetalLayer for Triple Buffering
+        // 4. Hook CAMetalLayer cho Triple Buffering & 120Hz
         Class metalLayerClass = objc_getClass("CAMetalLayer");
         if (metalLayerClass) {
             Method mInit = class_getInstanceMethod(metalLayerClass, @selector(init));
@@ -2542,20 +2623,24 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
             }
         }
 
-        // 3. Hook NSProcessInfo for Thermal & Low Power Throttling Bypass
-        Class procClass = [NSProcessInfo class];
-        if (procClass) {
-            Method mThermal = class_getInstanceMethod(procClass, @selector(thermalState));
-            if (mThermal) {
-                method_setImplementation(mThermal, (IMP)hook_NSProcessInfo_thermalState);
-            }
-            Method mLowPower = class_getInstanceMethod(procClass, @selector(isLowPowerModeEnabled));
-            if (mLowPower) {
-                method_setImplementation(mLowPower, (IMP)hook_NSProcessInfo_isLowPowerModeEnabled);
+        // 5. Hook CAAnimation
+        Class animClass = [CAAnimation class];
+        if (animClass) {
+            Method mAnimRange = class_getInstanceMethod(animClass, @selector(setPreferredFrameRateRange:));
+            if (mAnimRange) {
+                orig_CAAnimation_setPreferredFrameRateRange = (void *)method_getImplementation(mAnimRange);
+                method_setImplementation(mAnimRange, (IMP)hook_CAAnimation_setPreferredFrameRateRange);
             }
         }
 
-        // 4. Hook UIDevice to prevent Battery Low Power Clocks
+        // 6. Hook NSProcessInfo & UIDevice cho Thermal & Clock Stabilization
+        Class procClass = [NSProcessInfo class];
+        if (procClass) {
+            Method mThermal = class_getInstanceMethod(procClass, @selector(thermalState));
+            if (mThermal) method_setImplementation(mThermal, (IMP)hook_NSProcessInfo_thermalState);
+            Method mLowPower = class_getInstanceMethod(procClass, @selector(isLowPowerModeEnabled));
+            if (mLowPower) method_setImplementation(mLowPower, (IMP)hook_NSProcessInfo_isLowPowerModeEnabled);
+        }
         Class devClass = [UIDevice class];
         if (devClass) {
             Method mBatState = class_getInstanceMethod(devClass, @selector(batteryState));
@@ -2566,7 +2651,7 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
             if (mBatMon) method_setImplementation(mBatMon, (IMP)hook_UIDevice_isBatteryMonitoringEnabled);
         }
 
-        // 5. Hook AVPlayer for Zero-Stall Playback
+        // 7. Hook AVPlayer cho Zero-Stall Playback
         Class avClass = [AVPlayer class];
         if (avClass) {
             Method mStall = class_getInstanceMethod(avClass, @selector(setAutomaticallyWaitsToMinimizeStalling:));
@@ -2576,9 +2661,9 @@ static void AMInitSmoothnessAndPerformanceEngine(void) {
             }
         }
 
-        // 6. Expand Cache
+        // 8. Tối ưu bộ nhớ
         AMOptimizeCacheAndMemory();
-        NSLog(@"[AlightMotionUltra] Successfully initialized 120 FPS ProMotion & Metal Triple-Buffering Engine!");
+        NSLog(@"[AlightMotionUltra] Successfully initialized True 120Hz Ultra ProMotion Engine across Screen, Metal & Animations!");
     });
 }
 
