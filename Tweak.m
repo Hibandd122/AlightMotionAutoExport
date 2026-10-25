@@ -2250,7 +2250,9 @@ static BOOL hook_UITextView_resignFirstResponder(UITextView *self, SEL _cmd) {
 
 
 #pragma mark - =========================================================
-#pragma mark 7. View Controller Lifecycle & Home Screen Floating HUD
+#pragma mark 7. Export Pipeline & Auto-Save Lifecycle
+#pragma mark - =========================================================
+
 static id getObjcIvar(id obj, const char *name) {
     if (!obj) return nil;
     Class cls = object_getClass(obj);
