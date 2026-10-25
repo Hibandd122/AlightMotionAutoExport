@@ -1962,6 +1962,8 @@ static UIImage *AMGetSystemIcon(NSString *symbolName, NSString *fallbackText, CG
 
     if (tv) {
         tv.text = line;
+        tv.textColor = [UIColor whiteColor]; // Luôn giữ màu chữ trắng tinh khiết
+        
         if ([tv.delegate respondsToSelector:@selector(textViewDidChange:)]) {
             [tv.delegate textViewDidChange:tv];
         }
@@ -1972,6 +1974,14 @@ static UIImage *AMGetSystemIcon(NSString *symbolName, NSString *fallbackText, CG
 
         @try {
             [self.targetVC setValue:line forKey:@"appearText"];
+            
+            // Đồng bộ màu trắng với ColorView của EditTextPanelVC nếu có
+            id parent = [self.targetVC parentViewController] ?: self.targetVC;
+            id cv = nil;
+            @try { cv = [parent valueForKey:@"colorView"]; } @catch (NSException *e) {}
+            if (cv && [cv respondsToSelector:@selector(setCurrentColor:)]) {
+                [cv setValue:[UIColor whiteColor] forKey:@"currentColor"];
+            }
         } @catch (NSException *e) {}
 
         [mgr consumeNextLineText];
@@ -2210,11 +2220,57 @@ static void AMNeutralizeAllHaptics(void) {
 
 
 
-#pragma mark - Hook UITextView (Lyrics Accessory Bar)
+#pragma mark - =========================================================
+#pragma mark Auto White Text Color Engine (Tự động giữ màu text trắng 100%)
+#pragma mark - =========================================================
+
+static BOOL AMIsColorDarkOrBlack(UIColor *color) {
+    if (!color) return YES;
+    CGFloat r = 0, g = 0, b = 0, a = 1.0;
+    if ([color getRed:&r green:&g blue:&b alpha:&a]) {
+        if (a < 0.1) return YES; // Màu trong suốt hoặc gần vô hình
+        CGFloat lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        return (lum < 0.30); // Độ sáng dưới 30% coi là màu đen / xám tối
+    }
+    CGFloat w = 0;
+    if ([color getWhite:&w alpha:&a]) {
+        if (a < 0.1) return YES;
+        return (w < 0.30);
+    }
+    return NO;
+}
+
+static BOOL AMIsTextEditResponder(UIResponder *responder) {
+    UIResponder *curr = responder;
+    while (curr) {
+        if ([curr isKindOfClass:[UIViewController class]]) {
+            NSString *name = NSStringFromClass([curr class]);
+            if ([name containsString:@"TextInput"] || [name containsString:@"EditText"] || [name containsString:@"Text"]) {
+                return YES;
+            }
+        }
+        curr = [curr nextResponder];
+    }
+    return NO;
+}
+
+static void (*orig_UITextView_setTextColor)(UITextView *, SEL, UIColor *);
+static void hook_UITextView_setTextColor(UITextView *self, SEL _cmd, UIColor *color) {
+    if (AMIsTextEditResponder(self)) {
+        if (AMIsColorDarkOrBlack(color)) {
+            color = [UIColor whiteColor]; // Ép màu chữ trắng sáng rõ
+        }
+    }
+    if (orig_UITextView_setTextColor) {
+        orig_UITextView_setTextColor(self, _cmd, color);
+    }
+}
 
 static BOOL (*orig_UITextView_becomeFirstResponder)(UITextView *, SEL);
 static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
-    if (self.inputAccessoryView == nil) {
+    BOOL isTextEdit = AMIsTextEditResponder(self);
+
+    if (self.inputAccessoryView == nil && isTextEdit) {
         UIResponder *responder = self;
         while ((responder = [responder nextResponder])) {
             if ([responder isKindOfClass:[UIViewController class]]) {
@@ -2222,19 +2278,23 @@ static BOOL hook_UITextView_becomeFirstResponder(UITextView *self, SEL _cmd) {
             }
         }
         if (responder) {
-            NSString *vcName = NSStringFromClass([responder class]);
-            if ([vcName containsString:@"TextInput"] || [vcName containsString:@"Edit"] || [vcName containsString:@"Text"]) {
-                AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:(UIViewController *)responder];
-                self.inputAccessoryView = bar;
-            }
+            AMMinimalLyricsBar *bar = [AMMinimalLyricsBar barForViewController:(UIViewController *)responder];
+            self.inputAccessoryView = bar;
         }
-        // Force Dark Keyboard Appearance across app
+    }
+
+    if (isTextEdit) {
+        // Tự động giữ màu text trắng và con trỏ sáng màu
+        if (AMIsColorDarkOrBlack(self.textColor)) {
+            self.textColor = [UIColor whiteColor];
+        }
+        self.tintColor = [UIColor colorWithRed:0.00 green:1.00 blue:0.66 alpha:1.0]; // #00FFA8
         self.keyboardAppearance = UIKeyboardAppearanceDark;
     }
+
     if (orig_UITextView_becomeFirstResponder) {
         return orig_UITextView_becomeFirstResponder(self, _cmd);
     }
-
     return YES;
 }
 
@@ -2244,6 +2304,17 @@ static BOOL hook_UITextView_resignFirstResponder(UITextView *self, SEL _cmd) {
         return orig_UITextView_resignFirstResponder(self, _cmd);
     }
     return YES;
+}
+
+// Hook ColorView của Alight Motion (ngăn app gán màu đen mặc định vào layer text)
+static void (*orig_ColorView_setCurrentColor)(id, SEL, UIColor *);
+static void hook_ColorView_setCurrentColor(id self, SEL _cmd, UIColor *color) {
+    if (AMIsColorDarkOrBlack(color)) {
+        color = [UIColor whiteColor];
+    }
+    if (orig_ColorView_setCurrentColor) {
+        orig_ColorView_setCurrentColor(self, _cmd, color);
+    }
 }
 
 
@@ -2583,7 +2654,7 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
             }
         }
 
-        // 6. Hook UITextView (Font Memory, White Text Color & Lyrics Accessory Bar)
+        // 6. Hook UITextView & ColorView (Auto White Text Color Engine & Lyrics Accessory Bar)
         Class tvClass = [UITextView class];
         if (tvClass) {
             Method becomeMethod = class_getInstanceMethod(tvClass, @selector(becomeFirstResponder));
@@ -2595,6 +2666,21 @@ __attribute__((constructor)) static void initAlightMotionUltra() {
             if (resignMethod) {
                 orig_UITextView_resignFirstResponder = (void *)method_getImplementation(resignMethod);
                 method_setImplementation(resignMethod, (IMP)hook_UITextView_resignFirstResponder);
+            }
+            Method setColorMethod = class_getInstanceMethod(tvClass, @selector(setTextColor:));
+            if (setColorMethod) {
+                orig_UITextView_setTextColor = (void *)method_getImplementation(setColorMethod);
+                method_setImplementation(setColorMethod, (IMP)hook_UITextView_setTextColor);
+            }
+        }
+
+        // Swizzle ColorView để triệt tiêu mọi hành vi đổi màu đen mặc định
+        Class colorViewClass = objc_getClass("_TtC12AlightMotion9ColorView");
+        if (colorViewClass) {
+            Method mColor = class_getInstanceMethod(colorViewClass, sel_registerName("setCurrentColor:"));
+            if (mColor) {
+                orig_ColorView_setCurrentColor = (void *)method_getImplementation(mColor);
+                method_setImplementation(mColor, (IMP)hook_ColorView_setCurrentColor);
             }
         }
 
